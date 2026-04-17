@@ -131,7 +131,7 @@ def parse_any_format(data) -> list[TokenData]:
 
             # 24h change (%)
             change = None
-            for key in ["priceChange24h", "change", "priceChangePercent", "percentagePriceChange", "P"]:
+            for key in ["priceChangePercent24H", "priceChange24h", "change", "priceChangePercent", "percentagePriceChange", "P"]:
                 val = item.get(key, ticker.get(key) if isinstance(ticker, dict) else None)
                 if val is not None:
                     change = float(val)
@@ -156,9 +156,9 @@ def parse_any_format(data) -> list[TokenData]:
             if change <= 0:
                 continue
 
-            # Volume
+            # Volume (prefer USD volume from XBO)
             volume = 0
-            for key in ["quoteVolume", "last24HTradeVolume", "volume", "deal", "vol"]:
+            for key in ["last24HTradeVolumeUsd", "quoteVolume", "last24HTradeVolume", "volume", "deal", "vol"]:
                 val = item.get(key, ticker.get(key) if isinstance(ticker, dict) else None)
                 if val is not None:
                     volume = float(val)
@@ -392,6 +392,41 @@ def send_telegram(text, image=None):
         return False
 
 
+def enrich_market_caps(tokens: list[TokenData]):
+    """Подтягиваем Market Cap из CoinGecko для топ-5 токенов."""
+    try:
+        coins = requests.get("https://api.coingecko.com/api/v3/coins/list", timeout=15).json()
+        sym_to_id = {}
+        for c in coins:
+            s = c["symbol"].upper()
+            if s not in sym_to_id:
+                sym_to_id[s] = c["id"]
+
+        ids, id_to_token = [], {}
+        for t in tokens:
+            cg_id = sym_to_id.get(t.symbol.upper())
+            if cg_id:
+                ids.append(cg_id)
+                id_to_token[cg_id] = t
+
+        if not ids:
+            return
+
+        resp = requests.get(
+            f"https://api.coingecko.com/api/v3/coins/markets"
+            f"?vs_currency=usd&ids={','.join(ids)}",
+            timeout=15,
+        )
+        if resp.status_code == 200:
+            for coin in resp.json():
+                t = id_to_token.get(coin["id"])
+                if t:
+                    t.market_cap = float(coin.get("market_cap") or 0)
+            print("✅ Market Cap данные добавлены из CoinGecko")
+    except Exception as e:
+        print(f"⚠️ Не удалось получить Market Cap: {e}")
+
+
 def main():
     print("🚀 XBO Top 5 Tokens Bot")
     print(f"   {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}\n")
@@ -401,9 +436,13 @@ def main():
         print("\n❌ Данные не получены!")
         exit(1)
 
+    # Подтягиваем Market Cap если его нет
+    if any(t.market_cap == 0 for t in tokens):
+        enrich_market_caps(tokens)
+
     print(f"\n📊 Результат:")
     for t in tokens:
-        print(f"   {t.symbol}: ${format_price(t.price)} | +{t.daily_gain}%")
+        print(f"   {t.symbol}: ${format_price(t.price)} | +{t.daily_gain}% | Vol: ${format_number(t.trading_volume)}")
 
     try:
         image = generate_image(tokens)
