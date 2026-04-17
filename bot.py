@@ -176,6 +176,15 @@ def parse_any_format(data) -> list[TokenData]:
         except (ValueError, TypeError):
             continue
 
+    # Фильтруем по минимальному объёму торгов
+    # Сайт XBO показывает только ликвидные монеты с объёмом от ~$100K+
+    # Сначала пробуем строгий фильтр, если мало результатов — снижаем
+    for min_vol in [100_000, 50_000, 10_000, 0]:
+        filtered = [t for t in tokens if t.trading_volume >= min_vol]
+        if len(filtered) >= 5:
+            filtered.sort(key=lambda t: t.daily_gain, reverse=True)
+            return filtered[:5]
+
     tokens.sort(key=lambda t: t.daily_gain, reverse=True)
     return tokens[:5]
 
@@ -393,7 +402,7 @@ def send_telegram(text, image=None):
 
 
 def enrich_market_caps(tokens: list[TokenData]):
-    """Подтягиваем Market Cap из CoinGecko для топ-5 токенов."""
+    """Подтягиваем Market Cap и глобальный Volume из CoinGecko для топ-5 токенов."""
     try:
         coins = requests.get("https://api.coingecko.com/api/v3/coins/list", timeout=15).json()
         sym_to_id = {}
@@ -422,7 +431,11 @@ def enrich_market_caps(tokens: list[TokenData]):
                 t = id_to_token.get(coin["id"])
                 if t:
                     t.market_cap = float(coin.get("market_cap") or 0)
-            print("✅ Market Cap данные добавлены из CoinGecko")
+                    # Берём глобальный 24h volume (как показывает сайт XBO)
+                    global_vol = float(coin.get("total_volume") or 0)
+                    if global_vol > t.trading_volume:
+                        t.trading_volume = global_vol
+            print("✅ Market Cap и Volume добавлены из CoinGecko")
     except Exception as e:
         print(f"⚠️ Не удалось получить Market Cap: {e}")
 
@@ -436,9 +449,8 @@ def main():
         print("\n❌ Данные не получены!")
         exit(1)
 
-    # Подтягиваем Market Cap если его нет
-    if any(t.market_cap == 0 for t in tokens):
-        enrich_market_caps(tokens)
+    # Подтягиваем Market Cap и глобальный Volume из CoinGecko
+    enrich_market_caps(tokens)
 
     print(f"\n📊 Результат:")
     for t in tokens:
