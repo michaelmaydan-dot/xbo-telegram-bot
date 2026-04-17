@@ -169,10 +169,25 @@ def fetch_from_website() -> list[TokenData]:
                 if not sym or change <= 0 or len(nums) < 1:
                     continue
 
-                # Определяем поля: обычно price, volume, market_cap
+                # nums содержит все числа из строки: [price, change_value, volume, mcap, ...]
+                # change уже извлечён отдельно, нужно найти price, volume, mcap
+                # Стратегия: price — первое число, потом пропускаем число близкое к change,
+                # следующие — volume и mcap
+
                 price = nums[0] if nums else 0
-                volume = nums[1] if len(nums) > 1 else 0
-                mcap = nums[2] if len(nums) > 2 else 0
+
+                # Убираем из массива price и число соответствующее change
+                remaining = []
+                change_skipped = False
+                for n in nums[1:]:
+                    # Пропускаем число которое совпадает с change (±0.5)
+                    if not change_skipped and abs(n - change) < 0.5:
+                        change_skipped = True
+                        continue
+                    remaining.append(n)
+
+                volume = remaining[0] if len(remaining) > 0 else 0
+                mcap = remaining[1] if len(remaining) > 1 else 0
 
                 if price > 0:
                     tokens.append(TokenData(
