@@ -11,10 +11,10 @@ from io import BytesIO
 from dataclasses import dataclass
 
 
-# ─── Конфигурация ────────────────────────────────────────────────────
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 XBO_SPOT_BASE = "https://www.xbo.com/platform/spot"
+XBO_API_BASE = "https://api.xbo.com"
 
 
 @dataclass
@@ -26,446 +26,395 @@ class TokenData:
     market_cap: float
 
 
-# ═════════════════════════════════════════════════════════════════════
-# 1. ПОЛУЧЕНИЕ ДАННЫХ
-# ═════════════════════════════════════════════════════════════════════
-
 def fetch_top5_tokens() -> list[TokenData]:
-    """
-    Получаем данные с XBO.com Public API.
-    Документация: https://public-docs.xbo.com/
-    Endpoint: /trading-pairs — 24h stats по всем парам.
-    """
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "Accept": "application/json",
     }
 
-    # Список endpoint'ов для попытки (XBO Public API)
-    endpoints = [
-        "https://public-api.xbo.com/trading-pairs",
-        "https://public-api.xbo.com/api/v1/trading-pairs",
-        "https://api.xbo.com/api/v1/public/tickers",
-        "https://api.xbo.com/v1/public/tickers",
-        "https://www.xbo.com/api/v1/public/tickers",
-        "https://public-api.xbo.com/tickers",
+    # Все возможные пути XBO Public API
+    paths = [
+        "/trading-pairs/stats",
+        "/trading-pairs",
+        "/trading-pairs-stats",
+        "/v1/trading-pairs/stats",
+        "/v1/trading-pairs",
+        "/tickers",
+        "/v1/tickers",
     ]
 
-    for url in endpoints:
+    for path in paths:
         try:
+            url = f"{XBO_API_BASE}{path}"
+            print(f"Пробуем: {url}")
             resp = requests.get(url, headers=headers, timeout=15)
+            print(f"  Статус: {resp.status_code}")
             if resp.status_code == 200:
                 data = resp.json()
-                tokens = parse_response(data)
+                preview = json.dumps(data, default=str)[:500]
+                print(f"  Данные: {preview}")
+                tokens = parse_any_format(data)
                 if tokens:
-                    print(f"✅ Данные получены с {url}")
+                    print(f"✅ Успех: {path}")
                     return tokens
+                else:
+                    print(f"  Парсинг не дал результатов")
         except Exception as e:
-            print(f"⚠️ {url} — {e}")
-            continue
+            print(f"  Ошибка: {e}")
 
-    # Fallback: CoinGecko API (данные XBO.com через агрегатор)
-    print("Пробуем CoinGecko как fallback...")
+    # Fallback: CoinGecko
+    print("\nПробуем CoinGecko...")
     return fetch_via_coingecko()
 
 
-def parse_response(data) -> list[TokenData]:
-    """Парсинг ответа API — адаптивный под разные форматы."""
+def parse_any_format(data) -> list[TokenData]:
     tokens = []
 
-    # Формат может быть list или dict
-    if isinstance(data, dict):
-        # Если есть ключ data/result/tickers
-        items = data.get("data", data.get("result", data.get("tickers", data)))
-        if isinstance(items, dict):
-            # Формат {"BTC_USDT": {...}, "ETH_USDT": {...}}
-            for key, val in items.items():
-                token = parse_ticker_item(val, key)
-                if token:
-                    tokens.append(token)
-        elif isinstance(items, list):
-            for item in items:
-                token = parse_ticker_item(item)
-                if token:
-                    tokens.append(token)
-    elif isinstance(data, list):
-        for item in data:
-            token = parse_ticker_item(item)
-            if token:
-                tokens.append(token)
+    # Определяем формат
+    if isinstance(data, list):
+        items = data
+    elif isinstance(data, dict):
+        # Ищем массив внутри dict
+        for key in ["data", "result", "tickers", "pairs"]:
+            if key in data and isinstance(data[key], list):
+                items = data[key]
+                break
+        else:
+            # Может быть dict вида {"BTC/USDT": {...}, ...}
+            items = []
+            for k, v in data.items():
+                if isinstance(v, dict):
+                    v["_key"] = k
+                    items.append(v)
+    else:
+        return []
 
-    # Фильтруем только USDT пары с положительным ростом
-    tokens = [t for t in tokens if t.daily_gain > 0]
+    for item in items:
+        try:
+            if not isinstance(item, dict):
+                continue
+
+            # Определяем символ и фильтруем только USDT пары
+            symbol_raw = item.get("symbol", item.get("name", item.get("pair", item.get("_key", ""))))
+            base = item.get("baseCurrency", item.get("base", ""))
+            quote = item.get("quoteCurrency", item.get("target", item.get("quote", "")))
+
+            if quote and quote.upper() == "USDT":
+                symbol = base.upper()
+            elif "USDT" in str(symbol_raw).upper():
+                symbol = str(symbol_raw).upper()
+                for suffix in ["/USDT", "_USDT", "-USDT", "USDT"]:
+                    symbol = symbol.replace(suffix, "")
+                symbol = symbol.strip()
+            else:
+                continue
+
+            if not symbol or len(symbol) > 15:
+                continue
+
+            # Цена
+            price = 0
+            for key in ["lastPrice", "last", "close", "price", "c"]:
+                if key in item:
+                    price = float(item[key])
+                    break
+            # Также пробуем вложенный ticker
+            ticker = item.get("ticker", {})
+            if not price and isinstance(ticker, dict):
+                for key in ["last", "lastPrice", "close"]:
+                    if key in ticker:
+                        price = float(ticker[key])
+                        break
+
+            if price <= 0:
+                continue
+
+            # 24h change (%)
+            change = None
+            for key in ["priceChange24h", "change", "priceChangePercent", "percentagePriceChange", "P"]:
+                val = item.get(key, ticker.get(key) if isinstance(ticker, dict) else None)
+                if val is not None:
+                    change = float(val)
+                    break
+
+            if change is None:
+                open_p = 0
+                for key in ["open", "openPrice"]:
+                    val = item.get(key, ticker.get(key) if isinstance(ticker, dict) else None)
+                    if val is not None:
+                        open_p = float(val)
+                        break
+                if open_p > 0:
+                    change = ((price - open_p) / open_p) * 100
+                else:
+                    continue
+
+            # Если change в дробном формате (0.05 вместо 5%)
+            if abs(change) < 0.5 and change != 0:
+                change *= 100
+
+            if change <= 0:
+                continue
+
+            # Volume
+            volume = 0
+            for key in ["quoteVolume", "last24HTradeVolume", "volume", "deal", "vol"]:
+                val = item.get(key, ticker.get(key) if isinstance(ticker, dict) else None)
+                if val is not None:
+                    volume = float(val)
+                    break
+
+            mcap = float(item.get("marketCap", 0))
+
+            tokens.append(TokenData(
+                symbol=symbol,
+                price=price,
+                daily_gain=round(change, 2),
+                trading_volume=volume,
+                market_cap=mcap,
+            ))
+        except (ValueError, TypeError):
+            continue
+
     tokens.sort(key=lambda t: t.daily_gain, reverse=True)
     return tokens[:5]
 
 
-def parse_ticker_item(item, key=None) -> TokenData | None:
-    """Парсинг одного тикера."""
-    try:
-        if isinstance(item, dict):
-            ticker = item.get("ticker", item)
-
-            # Определяем символ
-            symbol_raw = (
-                ticker.get("symbol")
-                or ticker.get("name")
-                or ticker.get("pair")
-                or key
-                or ""
-            )
-            # Убираем USDT/BTC суффиксы
-            symbol = (
-                symbol_raw.replace("/USDT", "")
-                .replace("_USDT", "")
-                .replace("-USDT", "")
-                .replace("USDT", "")
-                .replace("/", "")
-                .replace("_", "")
-                .strip()
-            )
-
-            if not symbol or symbol in ("BTC", "ETH", "USDT", "USDC"):
-                # Пропускаем основные монеты — нас интересуют альткоины
-                pass
-
-            # Цена
-            price = float(
-                ticker.get("last", ticker.get("lastPrice", ticker.get("close", ticker.get("c", 0))))
-            )
-
-            # Изменение за 24ч (%)
-            change = ticker.get("change", ticker.get("priceChangePercent", ticker.get("P", None)))
-            if change is not None:
-                change = float(change)
-                # Если значение дробное (0.05 = 5%), умножаем на 100
-                if -1 < change < 1 and change != 0:
-                    change *= 100
-            else:
-                # Вычисляем из open/last
-                open_price = float(ticker.get("open", 0))
-                if open_price > 0 and price > 0:
-                    change = ((price - open_price) / open_price) * 100
-                else:
-                    return None
-
-            # Volume
-            volume = float(
-                ticker.get("deal", ticker.get("quoteVolume", ticker.get("vol", ticker.get("volume", 0))))
-            )
-
-            # Market cap (может отсутствовать в API биржи)
-            mcap = float(ticker.get("marketCap", ticker.get("mc", 0)))
-
-            if price > 0 and symbol:
-                return TokenData(
-                    symbol=symbol,
-                    price=price,
-                    daily_gain=round(change, 2),
-                    trading_volume=volume,
-                    market_cap=mcap,
-                )
-    except (ValueError, TypeError, AttributeError):
-        pass
-    return None
-
-
 def fetch_via_coingecko() -> list[TokenData]:
-    """Fallback: получаем данные через CoinGecko API (биржа XBO.com)."""
     try:
-        url = "https://api.coingecko.com/api/v3/exchanges/xbo-com/tickers"
-        resp = requests.get(url, timeout=15)
-        if resp.status_code != 200:
-            print(f"CoinGecko вернул {resp.status_code}")
-            return []
-
-        data = resp.json()
-        tickers = data.get("tickers", [])
-
-        tokens = []
-        for t in tickers:
-            if t.get("target") != "USDT":
+        for ex_id in ["xbo-com", "xbo", "xbo_com"]:
+            url = f"https://api.coingecko.com/api/v3/exchanges/{ex_id}/tickers"
+            print(f"  CoinGecko: {url}")
+            resp = requests.get(url, timeout=15)
+            print(f"  Статус: {resp.status_code}")
+            if resp.status_code != 200:
                 continue
-            base = t.get("base", "")
-            last = float(t.get("last", 0))
-            volume = float(t.get("converted_volume", {}).get("usd", 0))
 
-            # CoinGecko не даёт 24h change напрямую в exchange tickers
-            # Используем bid_ask_spread как proxy или пропускаем
-            tokens.append(TokenData(
-                symbol=base,
-                price=last,
-                daily_gain=0,  # Будем заполнять отдельно
-                trading_volume=volume,
-                market_cap=0,
-            ))
+            tickers = resp.json().get("tickers", [])
+            if not tickers:
+                continue
 
-        # Если нет данных о change — пробуем через coins API
-        if tokens:
-            enrich_with_change(tokens)
-            tokens = [t for t in tokens if t.daily_gain > 0]
+            # Собираем уникальные USDT пары
+            token_map = {}
+            for t in tickers:
+                if t.get("target") != "USDT":
+                    continue
+                base = t.get("base", "")
+                if base not in token_map:
+                    token_map[base] = TokenData(
+                        symbol=base,
+                        price=float(t.get("last", 0)),
+                        daily_gain=0,
+                        trading_volume=float(t.get("converted_volume", {}).get("usd", 0)),
+                        market_cap=0,
+                    )
+
+            if not token_map:
+                continue
+
+            # Обогащаем 24h change
+            enrich_coingecko(token_map)
+            tokens = [t for t in token_map.values() if t.daily_gain > 0]
             tokens.sort(key=lambda t: t.daily_gain, reverse=True)
+            if tokens:
+                print(f"✅ CoinGecko ({ex_id}): {len(tokens)} токенов")
+                return tokens[:5]
 
-        return tokens[:5]
-
+        return []
     except Exception as e:
-        print(f"CoinGecko ошибка: {e}")
+        print(f"  CoinGecko ошибка: {e}")
         return []
 
 
-def enrich_with_change(tokens: list[TokenData]):
-    """Дополняем данные о 24h change через CoinGecko."""
+def enrich_coingecko(token_map: dict):
     try:
-        ids_map = {}
-        # Получаем список монет CoinGecko
-        coins_list = requests.get(
-            "https://api.coingecko.com/api/v3/coins/list", timeout=15
-        ).json()
+        coins = requests.get("https://api.coingecko.com/api/v3/coins/list", timeout=15).json()
+        sym_to_id = {}
+        for c in coins:
+            s = c["symbol"].upper()
+            if s not in sym_to_id:
+                sym_to_id[s] = c["id"]
 
-        symbol_to_id = {}
-        for coin in coins_list:
-            sym = coin["symbol"].upper()
-            if sym not in symbol_to_id:
-                symbol_to_id[sym] = coin["id"]
-
-        # Собираем ids для наших токенов
-        ids = []
-        for t in tokens:
-            cg_id = symbol_to_id.get(t.symbol.upper())
+        ids, id_to_sym = [], {}
+        for sym in token_map:
+            cg_id = sym_to_id.get(sym.upper())
             if cg_id:
                 ids.append(cg_id)
-                ids_map[cg_id] = t
+                id_to_sym[cg_id] = sym
 
         if not ids:
             return
 
-        # Запрашиваем market data
-        ids_str = ",".join(ids[:20])
-        market_data = requests.get(
-            f"https://api.coingecko.com/api/v3/coins/markets"
-            f"?vs_currency=usd&ids={ids_str}&price_change_percentage=24h",
-            timeout=15,
-        ).json()
-
-        for coin in market_data:
-            token = ids_map.get(coin["id"])
-            if token:
-                token.daily_gain = round(
-                    float(coin.get("price_change_percentage_24h", 0)), 2
-                )
-                token.market_cap = float(coin.get("market_cap", 0))
-
+        for i in range(0, len(ids), 50):
+            chunk = ids[i:i + 50]
+            resp = requests.get(
+                f"https://api.coingecko.com/api/v3/coins/markets"
+                f"?vs_currency=usd&ids={','.join(chunk)}&price_change_percentage=24h",
+                timeout=15,
+            )
+            if resp.status_code != 200:
+                continue
+            for coin in resp.json():
+                sym = id_to_sym.get(coin["id"])
+                if sym and sym in token_map:
+                    token_map[sym].daily_gain = round(float(coin.get("price_change_percentage_24h") or 0), 2)
+                    token_map[sym].market_cap = float(coin.get("market_cap") or 0)
     except Exception as e:
-        print(f"Ошибка обогащения данных: {e}")
+        print(f"  Enrich ошибка: {e}")
 
 
 # ═════════════════════════════════════════════════════════════════════
-# 2. ГЕНЕРАЦИЯ КАРТИНКИ
+# ГЕНЕРАЦИЯ КАРТИНКИ
 # ═════════════════════════════════════════════════════════════════════
 
 def generate_image(tokens: list[TokenData]) -> BytesIO:
-    """Генерация картинки в стиле XBO.com."""
     from PIL import Image, ImageDraw, ImageFont
 
     WIDTH, HEIGHT = 1200, 720
     img = Image.new("RGB", (WIDTH, HEIGHT))
     draw = ImageDraw.Draw(img)
 
-    # Фон: тёмный градиент
     for y in range(HEIGHT):
-        r = int(15 + (25 - 15) * y / HEIGHT)
-        g = int(10 + (18 - 10) * y / HEIGHT)
-        b = int(40 + (60 - 40) * y / HEIGHT)
+        r = int(15 + 10 * y / HEIGHT)
+        g = int(10 + 8 * y / HEIGHT)
+        b = int(40 + 20 * y / HEIGHT)
         draw.line([(0, y), (WIDTH, y)], fill=(r, g, b))
 
-    # Декоративное свечение
     for i in range(150):
-        alpha = max(0, 30 - i // 5)
-        draw.ellipse(
-            [WIDTH - 200 - i, -100 - i, WIDTH + i, 200 + i],
-            fill=(80 + alpha, 50, 180 + min(alpha, 75)),
-        )
+        a = max(0, 30 - i // 5)
+        draw.ellipse([WIDTH - 200 - i, -100 - i, WIDTH + i, 200 + i],
+                     fill=(80 + a, 50, 180 + min(a, 75)))
 
-    # Шрифты
     try:
-        font_title = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 42)
-        font_header = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 18)
-        font_row = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 20)
-        font_row_bold = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 20)
-        font_small = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 14)
-        font_logo = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 36)
+        fb = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+        fn = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+        ft = ImageFont.truetype(fb, 42)
+        fh = ImageFont.truetype(fb, 18)
+        fr = ImageFont.truetype(fn, 20)
+        frb = ImageFont.truetype(fb, 20)
+        fs = ImageFont.truetype(fn, 14)
+        fl = ImageFont.truetype(fb, 36)
     except OSError:
-        font_title = ImageFont.load_default()
-        font_header = font_row = font_row_bold = font_small = font_logo = font_title
+        ft = fh = fr = frb = fs = fl = ImageFont.load_default()
 
-    # Логотип и заголовок
-    draw.text((40, 30), "xbo", fill=(120, 90, 255), font=font_logo)
-    draw.text((120, 38), ".com", fill=(180, 170, 220), font=font_header)
-    draw.text((WIDTH // 2 - 150, 30), "Top 5 Tokens", fill=(255, 255, 255), font=font_title)
+    draw.text((40, 30), "xbo", fill=(120, 90, 255), font=fl)
+    draw.text((120, 38), ".com", fill=(180, 170, 220), font=fh)
+    draw.text((WIDTH // 2 - 150, 30), "Top 5 Tokens", fill=(255, 255, 255), font=ft)
 
-    # Заголовки таблицы
-    header_y = 100
-    cols = {"token": 60, "gain": 380, "volume": 560, "mcap": 820}
+    hy = 100
+    cx = {"t": 60, "g": 380, "v": 560, "m": 820}
+    draw.text((cx["t"], hy), "TOKEN:", fill=(180, 170, 220), font=fh)
+    draw.text((cx["g"], hy), "DAILY GAIN:", fill=(180, 170, 220), font=fh)
+    draw.text((cx["v"], hy), "TRADING VOL.", fill=(180, 170, 220), font=fh)
+    draw.text((cx["m"], hy), "MARKET CAP", fill=(180, 170, 220), font=fh)
+    draw.line([(40, hy + 30), (WIDTH - 40, hy + 30)], fill=(60, 50, 100), width=1)
 
-    draw.text((cols["token"], header_y), "TOKEN:", fill=(180, 170, 220), font=font_header)
-    draw.text((cols["gain"], header_y), "DAILY GAIN:", fill=(180, 170, 220), font=font_header)
-    draw.text((cols["volume"], header_y), "TRADING VOL.", fill=(180, 170, 220), font=font_header)
-    draw.text((cols["mcap"], header_y), "MARKET CAP", fill=(180, 170, 220), font=font_header)
-    draw.line([(40, header_y + 30), (WIDTH - 40, header_y + 30)], fill=(60, 50, 100), width=1)
-
-    # Строки таблицы
-    row_height = 90
-    start_y = header_y + 50
-
-    for i, token in enumerate(tokens):
-        y = start_y + i * row_height
-
+    rh, sy = 90, hy + 50
+    for i, t in enumerate(tokens):
+        y = sy + i * rh
         if i % 2 == 0:
-            draw.rounded_rectangle(
-                [(40, y - 5), (WIDTH - 40, y + row_height - 15)],
-                radius=8, fill=(30, 25, 55),
-            )
+            draw.rounded_rectangle([(40, y - 5), (WIDTH - 40, y + rh - 15)], radius=8, fill=(30, 25, 55))
+        draw.text((cx["t"], y + 10), t.symbol, fill=(255, 255, 255), font=frb)
+        draw.text((cx["t"], y + 40), f"${format_price(t.price)}", fill=(160, 155, 200), font=fs)
+        gt = f"+{t.daily_gain:.2f}%"
+        bx = cx["g"] + 10
+        bw = len(gt) * 11 + 20
+        draw.rounded_rectangle([(bx, y + 12), (bx + bw, y + 45)], radius=12, fill=(20, 100, 60))
+        draw.text((bx + 10, y + 16), gt, fill=(80, 255, 140), font=fr)
+        draw.text((cx["v"], y + 18), f"${format_number(t.trading_volume)}" if t.trading_volume else "N/A", fill=(220, 215, 245), font=fr)
+        draw.text((cx["m"], y + 18), f"${format_number(t.market_cap)}" if t.market_cap else "N/A", fill=(220, 215, 245), font=fr)
 
-        draw.text((cols["token"], y + 10), token.symbol, fill=(255, 255, 255), font=font_row_bold)
-        draw.text((cols["token"], y + 40), f"${format_price(token.price)}", fill=(160, 155, 200), font=font_small)
-
-        # Daily Gain бейдж
-        gain_text = f"+{token.daily_gain:.2f}%"
-        badge_x = cols["gain"] + 10
-        badge_w = len(gain_text) * 11 + 20
-        draw.rounded_rectangle(
-            [(badge_x, y + 12), (badge_x + badge_w, y + 45)],
-            radius=12, fill=(20, 100, 60),
-        )
-        draw.text((badge_x + 10, y + 16), gain_text, fill=(80, 255, 140), font=font_row)
-
-        # Volume & Market Cap
-        vol_text = f"${format_number(token.trading_volume)}" if token.trading_volume else "N/A"
-        mcap_text = f"${format_number(token.market_cap)}" if token.market_cap else "N/A"
-        draw.text((cols["volume"], y + 18), vol_text, fill=(220, 215, 245), font=font_row)
-        draw.text((cols["mcap"], y + 18), mcap_text, fill=(220, 215, 245), font=font_row)
-
-    # Подпись
     now = datetime.utcnow().strftime("%d %b %Y, %H:%M UTC")
-    draw.text((40, HEIGHT - 40), f"Updated: {now}  •  xbo.com", fill=(120, 110, 160), font=font_small)
+    draw.text((40, HEIGHT - 40), f"Updated: {now}  •  xbo.com", fill=(120, 110, 160), font=fs)
 
-    buffer = BytesIO()
-    img.save(buffer, format="PNG", quality=95)
-    buffer.seek(0)
-    return buffer
-
-
-def format_price(price: float) -> str:
-    if price >= 1:
-        return f"{price:,.2f}"
-    elif price >= 0.01:
-        return f"{price:.4f}"
-    elif price >= 0.0001:
-        return f"{price:.6f}"
-    else:
-        return f"{price:.8f}"
+    buf = BytesIO()
+    img.save(buf, format="PNG", quality=95)
+    buf.seek(0)
+    return buf
 
 
-def format_number(num: float) -> str:
-    if num >= 1_000_000_000:
-        return f"{num / 1_000_000_000:,.2f}B"
-    elif num >= 1_000_000:
-        return f"{num / 1_000_000:,.2f}M"
-    elif num >= 1_000:
-        return f"{num:,.0f}"
-    return f"{num:,.2f}"
+def format_price(p):
+    if p >= 1: return f"{p:,.2f}"
+    elif p >= 0.01: return f"{p:.4f}"
+    elif p >= 0.0001: return f"{p:.6f}"
+    else: return f"{p:.8f}"
+
+
+def format_number(n):
+    if n >= 1e9: return f"{n/1e9:,.2f}B"
+    elif n >= 1e6: return f"{n/1e6:,.2f}M"
+    elif n >= 1e3: return f"{n:,.0f}"
+    return f"{n:,.2f}"
 
 
 # ═════════════════════════════════════════════════════════════════════
-# 3. ОТПРАВКА В TELEGRAM
+# ОТПРАВКА В TELEGRAM
 # ═════════════════════════════════════════════════════════════════════
 
-def build_post_text(tokens: list[TokenData]) -> str:
+def build_post_text(tokens):
     lines = ["🔥 <b>Top 5 Tokens on XBO.com in 24h!</b>\n"]
-
-    for token in tokens:
-        trade_url = f"{XBO_SPOT_BASE}/{token.symbol}-USDT"
-        vol_str = f"${format_number(token.trading_volume)}" if token.trading_volume else "N/A"
-        mcap_str = f"${format_number(token.market_cap)}" if token.market_cap else "N/A"
-
+    for t in tokens:
+        url = f"{XBO_SPOT_BASE}/{t.symbol}-USDT"
+        v = f"${format_number(t.trading_volume)}" if t.trading_volume else "N/A"
+        m = f"${format_number(t.market_cap)}" if t.market_cap else "N/A"
         lines.append(
-            f"💎 <b>${token.symbol}</b>\n"
-            f"   Price: <code>${format_price(token.price)}</code>\n"
-            f"   24H Performance: <b>+{token.daily_gain:.2f}%</b>\n"
-            f"   Trading Volume: <code>{vol_str}</code>\n"
-            f"   Market Cap: <code>{mcap_str}</code>\n"
-            f"   🔗 <a href=\"{trade_url}\">Trade Now</a>\n"
+            f"💎 <b>${t.symbol}</b>\n"
+            f"   Price: <code>${format_price(t.price)}</code>\n"
+            f"   24H Performance: <b>+{t.daily_gain:.2f}%</b>\n"
+            f"   Trading Volume: <code>{v}</code>\n"
+            f"   Market Cap: <code>{m}</code>\n"
+            f"   🔗 <a href=\"{url}\">Trade Now</a>\n"
         )
-
     lines.append("📊 Data from <a href=\"https://www.xbo.com\">XBO.com</a>")
     return "\n".join(lines)
 
 
-def send_telegram_post(text: str, image: BytesIO | None = None) -> bool:
+def send_telegram(text, image=None):
     try:
         if image:
-            url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
-            resp = requests.post(
-                url,
-                data={
-                    "chat_id": TELEGRAM_CHAT_ID,
-                    "caption": text,
-                    "parse_mode": "HTML",
-                    "disable_web_page_preview": True,
-                },
-                files={"photo": ("top5_tokens.png", image, "image/png")},
-                timeout=30,
-            )
+            r = requests.post(
+                f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto",
+                data={"chat_id": TELEGRAM_CHAT_ID, "caption": text, "parse_mode": "HTML"},
+                files={"photo": ("top5.png", image, "image/png")}, timeout=30)
         else:
-            url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-            resp = requests.post(
-                url,
-                json={
-                    "chat_id": TELEGRAM_CHAT_ID,
-                    "text": text,
-                    "parse_mode": "HTML",
-                    "disable_web_page_preview": True,
-                },
-                timeout=30,
-            )
-
-        result = resp.json()
-        if result.get("ok"):
-            print("✅ Пост отправлен в Telegram!")
+            r = requests.post(
+                f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+                json={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"},
+                timeout=30)
+        res = r.json()
+        if res.get("ok"):
+            print("✅ Отправлено в Telegram!")
             return True
-        else:
-            print(f"❌ Ошибка Telegram: {result}")
-            return False
+        print(f"❌ Telegram: {res}")
+        return False
     except Exception as e:
-        print(f"❌ Ошибка отправки: {e}")
+        print(f"❌ Ошибка: {e}")
         return False
 
 
-# ═════════════════════════════════════════════════════════════════════
-# ЗАПУСК
-# ═════════════════════════════════════════════════════════════════════
-
 def main():
-    print("🚀 Запуск бота...")
+    print("🚀 XBO Top 5 Tokens Bot")
+    print(f"   {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}\n")
 
     tokens = fetch_top5_tokens()
     if not tokens:
-        print("❌ Не удалось получить данные!")
-        return
+        print("\n❌ Данные не получены!")
+        exit(1)
 
-    print(f"📊 Топ-5: {[f'{t.symbol} +{t.daily_gain}%' for t in tokens]}")
+    print(f"\n📊 Результат:")
+    for t in tokens:
+        print(f"   {t.symbol}: ${format_price(t.price)} | +{t.daily_gain}%")
 
-    # Генерация картинки
     try:
         image = generate_image(tokens)
-        print("🖼️ Картинка создана")
+        print("🖼️ Картинка готова")
     except Exception as e:
-        print(f"⚠️ Картинка не создана: {e}")
+        print(f"⚠️ Без картинки: {e}")
         image = None
 
-    # Отправка
     text = build_post_text(tokens)
-    send_telegram_post(text, image)
+    if not send_telegram(text, image):
+        exit(1)
 
 
 if __name__ == "__main__":
