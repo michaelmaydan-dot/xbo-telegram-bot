@@ -457,8 +457,7 @@ def build_post(tokens):
             f"   24H Performance: <b>+{t.daily_gain:.2f}%</b>\n"
             f"   Trading Volume: <code>{v}</code>\n"
             f"   Market Cap: <code>{m}</code>\n"
-            f"   🔗 <a href=\"{url}\">Trade Now</a>\n")
-    lines.append("📊 Data from <a href=\"https://www.xbo.com\">XBO.com</a>")
+            f"   🔗 Trade Now: {url}\n")
     return "\n".join(lines)
 
 
