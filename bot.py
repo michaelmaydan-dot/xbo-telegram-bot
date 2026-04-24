@@ -256,14 +256,14 @@ def generate_image(tokens: list[TokenData]) -> BytesIO:
         f_symbol = f_price = f_gain = f_num = ImageFont.load_default()
 
     # Центры колонок (как доли от ширины)
-    COL_X = {
-        "token": int(W * 0.235),
-        "gain":  int(W * 0.445),
-        "vol":   int(W * 0.655),
-        "mcap":  int(W * 0.865),
+        COL_X = {
+        "token": int(W * 0.215),
+        "gain":  int(W * 0.425),
+        "vol":   int(W * 0.635),
+        "mcap":  int(W * 0.845),
     }
     # Центры строк (как доли от высоты)
-    ROW_Y = [int(H * p) for p in (0.375, 0.473, 0.570, 0.668, 0.765)]
+    ROW_Y = [int(H * p) for p in (0.368, 0.483, 0.598, 0.713, 0.828)]
 
     def center_text(x, y, text, font, fill):
         bbox = draw.textbbox((0, 0), text, font=font)
