@@ -1,6 +1,5 @@
 """
 XBO.com Top 5 Tokens — Telegram Bot (GitHub Actions)
-Парсит топ-5 растущих токенов со страницы xbo.com/platform/home
 """
 
 import os
@@ -27,10 +26,6 @@ class TokenData:
     trading_volume: float
     market_cap: float
 
-
-# ═════════════════════════════════════════════════════════════════════
-# 1. ПАРСИНГ СТРАНИЦЫ XBO.COM (Selenium)
-# ═════════════════════════════════════════════════════════════════════
 
 def fetch_from_website() -> list[TokenData]:
     try:
@@ -74,7 +69,7 @@ def fetch_from_website() -> list[TokenData]:
         except:
             pass
 
-        rows_data = driver.execute_script("""
+        rows_data = driver.execute_script(r"""
             const results = [];
             const rows = document.querySelectorAll('tr, [class*="row"], [class*="Row"], [class*="item"], [class*="Item"], [class*="coin"], [class*="Coin"]');
             for (const row of rows) {
@@ -94,7 +89,7 @@ def fetch_from_website() -> list[TokenData]:
                     else if (suffix === 'K') num *= 1e3;
                     allNumbers.push(num);
                 }
-                const symbolMatch = text.match(/^[^\\d]*?\\b([A-Z][A-Z0-9]{1,9})\\b/);
+                const symbolMatch = text.match(/^[^\d]*?\b([A-Z][A-Z0-9]{1,9})\b/);
                 let symbol = symbolMatch ? symbolMatch[1] : '';
                 const symbolEl = row.querySelector('[class*="symbol"], [class*="Symbol"], [class*="name"], [class*="Name"], [class*="ticker"], [class*="Ticker"]');
                 if (symbolEl && !symbol) {
@@ -140,10 +135,6 @@ def fetch_from_website() -> list[TokenData]:
         return tokens[:5]
     return []
 
-
-# ═════════════════════════════════════════════════════════════════════
-# 2. XBO API + ФИЛЬТРАЦИЯ (fallback)
-# ═════════════════════════════════════════════════════════════════════
 
 def fetch_from_api() -> list[TokenData]:
     headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
@@ -233,10 +224,6 @@ def fetch_top5_tokens() -> list[TokenData]:
     return []
 
 
-# ═════════════════════════════════════════════════════════════════════
-# ГЕНЕРАЦИЯ КАРТИНКИ — наложение данных на template.png
-# ═════════════════════════════════════════════════════════════════════
-
 def generate_image(tokens: list[TokenData]) -> BytesIO:
     from PIL import Image, ImageDraw, ImageFont
 
@@ -244,7 +231,6 @@ def generate_image(tokens: list[TokenData]) -> BytesIO:
     W, H = img.size
     draw = ImageDraw.Draw(img)
 
-    # Шрифты — размер относительно высоты картинки
     try:
         fb = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
         fn = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
@@ -255,14 +241,12 @@ def generate_image(tokens: list[TokenData]) -> BytesIO:
     except OSError:
         f_symbol = f_price = f_gain = f_num = ImageFont.load_default()
 
-    # Центры колонок (как доли от ширины)
-        COL_X = {
+    COL_X = {
         "token": int(W * 0.215),
         "gain":  int(W * 0.425),
         "vol":   int(W * 0.635),
         "mcap":  int(W * 0.845),
     }
-    # Центры строк (как доли от высоты)
     ROW_Y = [int(H * p) for p in (0.368, 0.483, 0.598, 0.713, 0.828)]
 
     def center_text(x, y, text, font, fill):
@@ -312,10 +296,6 @@ def fmt_num(n):
     elif n >= 1e3: return f"{n:,.0f}"
     return f"{n:,.2f}"
 
-
-# ═════════════════════════════════════════════════════════════════════
-# TELEGRAM
-# ═════════════════════════════════════════════════════════════════════
 
 def build_post(tokens):
     lines = ["🔥 <b>Top 5 Tokens on XBO.com in 24h!</b>\n"]
