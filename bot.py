@@ -234,20 +234,20 @@ def generate_image(tokens: list[TokenData]) -> BytesIO:
     try:
         fb = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
         fn = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-        f_symbol = ImageFont.truetype(fb, int(H * 0.048))
-        f_price = ImageFont.truetype(fn, int(H * 0.040))
-        f_gain = ImageFont.truetype(fb, int(H * 0.052))
-        f_num = ImageFont.truetype(fn, int(H * 0.040))
+        f_symbol = ImageFont.truetype(fb, int(H * 0.068))
+        f_price = ImageFont.truetype(fn, int(H * 0.056))
+        f_gain = ImageFont.truetype(fb, int(H * 0.075))
+        f_num = ImageFont.truetype(fn, int(H * 0.056))
     except OSError:
         f_symbol = f_price = f_gain = f_num = ImageFont.load_default()
 
     COL_X = {
-        "token": int(W * 0.215),
-        "gain":  int(W * 0.425),
-        "vol":   int(W * 0.635),
-        "mcap":  int(W * 0.845),
+        "token": int(W * 0.240),
+        "gain":  int(W * 0.430),
+        "vol":   int(W * 0.632),
+        "mcap":  int(W * 0.840),
     }
-    ROW_Y = [int(H * p) for p in (0.368, 0.483, 0.598, 0.713, 0.828)]
+    ROW_Y = [int(H * p) for p in (0.347, 0.445, 0.543, 0.641, 0.740)]
 
     def center_text(x, y, text, font, fill):
         bbox = draw.textbbox((0, 0), text, font=font)
