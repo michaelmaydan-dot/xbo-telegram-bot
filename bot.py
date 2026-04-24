@@ -234,10 +234,10 @@ def generate_image(tokens: list[TokenData]) -> BytesIO:
     try:
         fb = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
         fn = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-        f_symbol = ImageFont.truetype(fb, int(H * 0.068))
-        f_price = ImageFont.truetype(fn, int(H * 0.056))
-        f_gain = ImageFont.truetype(fb, int(H * 0.075))
-        f_num = ImageFont.truetype(fn, int(H * 0.056))
+        f_symbol = ImageFont.truetype(fb, int(H * 0.048))
+        f_price = ImageFont.truetype(fn, int(H * 0.040))
+        f_gain = ImageFont.truetype(fb, int(H * 0.050))
+        f_num = ImageFont.truetype(fn, int(H * 0.040))
     except OSError:
         f_symbol = f_price = f_gain = f_num = ImageFont.load_default()
 
@@ -247,7 +247,7 @@ def generate_image(tokens: list[TokenData]) -> BytesIO:
         "vol":   int(W * 0.632),
         "mcap":  int(W * 0.840),
     }
-    ROW_Y = [int(H * p) for p in (0.347, 0.445, 0.543, 0.641, 0.740)]
+    ROW_Y = [int(H * p) for p in (0.347, 0.443, 0.539, 0.635, 0.731)]
 
     def center_text(x, y, text, font, fill):
         bbox = draw.textbbox((0, 0), text, font=font)
