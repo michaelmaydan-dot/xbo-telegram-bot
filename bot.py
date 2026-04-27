@@ -227,12 +227,12 @@ def fetch_top5_tokens() -> list[TokenData]:
 def generate_image(tokens: list[TokenData]) -> BytesIO:
     from PIL import Image, ImageDraw, ImageFont
 
-    DEBUG = True  # ⚠️ красные точки для калибровки. Поставить False когда настроено.
+    DEBUG = True  # ⚠️ красные точки — центры ячеек. Убрать когда настроено.
 
     img = Image.open(TEMPLATE_PATH).convert("RGB")
     W, H = img.size
     draw = ImageDraw.Draw(img)
-    print(f"   Размер шаблона: {W}x{H}")
+    print(f"   📐 Размер шаблона: {W}x{H}")
 
     try:
         fb = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
@@ -250,7 +250,7 @@ def generate_image(tokens: list[TokenData]) -> BytesIO:
         "vol":   int(W * 0.632),
         "mcap":  int(W * 0.840),
     }
-    ROW_Y = [int(H * p) for p in (0.347, 0.443, 0.539, 0.635, 0.731)]
+    ROW_Y = [int(H * p) for p in (0.400, 0.493, 0.586, 0.679, 0.772)]
 
     def center_text(x, y, text, font, fill):
         bbox = draw.textbbox((0, 0), text, font=font)
@@ -281,7 +281,6 @@ def generate_image(tokens: list[TokenData]) -> BytesIO:
         center_text(COL_X["mcap"], y, mcap, f_num, (230, 225, 245))
 
     if DEBUG:
-        # Красные точки в местах, где код считает центрами ячеек
         r = max(5, int(W * 0.008))
         for y in ROW_Y:
             for col_x in COL_X.values():
