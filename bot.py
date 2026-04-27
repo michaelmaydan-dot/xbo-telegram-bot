@@ -227,7 +227,7 @@ def fetch_top5_tokens() -> list[TokenData]:
 def generate_image(tokens: list[TokenData]) -> BytesIO:
     from PIL import Image, ImageDraw, ImageFont
 
-    DEBUG = True  # ⚠️ красные точки — центры ячеек. Убрать когда настроено.
+    DEBUG = True  # ⚠️ красные точки. Поставить False когда настроено.
 
     img = Image.open(TEMPLATE_PATH).convert("RGB")
     W, H = img.size
@@ -250,7 +250,10 @@ def generate_image(tokens: list[TokenData]) -> BytesIO:
         "vol":   int(W * 0.632),
         "mcap":  int(W * 0.840),
     }
-    ROW_Y = [int(H * p) for p in (0.400, 0.493, 0.586, 0.679, 0.772)]
+    ROW_Y = [int(H * p) for p in (0.405, 0.510, 0.615, 0.720, 0.825)]
+
+    print(f"   📍 ROW_Y (px): {ROW_Y}")
+    print(f"   📍 COL_X (px): {list(COL_X.values())}")
 
     def center_text(x, y, text, font, fill):
         bbox = draw.textbbox((0, 0), text, font=font)
