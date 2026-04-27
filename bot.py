@@ -227,9 +227,12 @@ def fetch_top5_tokens() -> list[TokenData]:
 def generate_image(tokens: list[TokenData]) -> BytesIO:
     from PIL import Image, ImageDraw, ImageFont
 
+    DEBUG = True  # ⚠️ красные точки для калибровки. Поставить False когда настроено.
+
     img = Image.open(TEMPLATE_PATH).convert("RGB")
     W, H = img.size
     draw = ImageDraw.Draw(img)
+    print(f"   Размер шаблона: {W}x{H}")
 
     try:
         fb = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
@@ -276,6 +279,13 @@ def generate_image(tokens: list[TokenData]) -> BytesIO:
         mcap = f"${int(t.market_cap):,}" if t.market_cap else "N/A"
         center_text(COL_X["vol"], y, vol, f_num, (230, 225, 245))
         center_text(COL_X["mcap"], y, mcap, f_num, (230, 225, 245))
+
+    if DEBUG:
+        # Красные точки в местах, где код считает центрами ячеек
+        r = max(5, int(W * 0.008))
+        for y in ROW_Y:
+            for col_x in COL_X.values():
+                draw.ellipse([col_x - r, y - r, col_x + r, y + r], fill=(255, 0, 0))
 
     buf = BytesIO()
     img.save(buf, format="PNG", quality=95)
