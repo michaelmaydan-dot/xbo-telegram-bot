@@ -227,30 +227,35 @@ def fetch_top5_tokens() -> list[TokenData]:
 def generate_image(tokens: list[TokenData]) -> BytesIO:
     from PIL import Image, ImageDraw, ImageFont
 
-    DEBUG = True  # ⚠️ красные точки. Поставить False когда настроено.
+    DEBUG = True  # ⚠️ красные точки. Убрать когда настроено.
 
     img = Image.open(TEMPLATE_PATH).convert("RGB")
     W, H = img.size
     draw = ImageDraw.Draw(img)
     print(f"   📐 Размер шаблона: {W}x{H}")
 
+    # Базовые размеры подобраны под 640x360, масштабируются при других разрешениях
+    sx = W / 640
+    sy = H / 360
+
     try:
         fb = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
         fn = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-        f_symbol = ImageFont.truetype(fb, int(H * 0.048))
-        f_price = ImageFont.truetype(fn, int(H * 0.040))
-        f_gain = ImageFont.truetype(fb, int(H * 0.050))
-        f_num = ImageFont.truetype(fn, int(H * 0.040))
+        f_symbol = ImageFont.truetype(fb, max(10, int(17 * sy)))
+        f_price = ImageFont.truetype(fn, max(9, int(14 * sy)))
+        f_gain = ImageFont.truetype(fb, max(10, int(18 * sy)))
+        f_num = ImageFont.truetype(fn, max(9, int(14 * sy)))
     except OSError:
         f_symbol = f_price = f_gain = f_num = ImageFont.load_default()
 
+    # Центры капсул — измерены прямо по template.png 640x360
     COL_X = {
-        "token": int(W * 0.240),
-        "gain":  int(W * 0.430),
-        "vol":   int(W * 0.632),
-        "mcap":  int(W * 0.840),
+        "token": int(154 * sx),
+        "gain":  int(275 * sx),
+        "vol":   int(408 * sx),
+        "mcap":  int(539 * sx),
     }
-    ROW_Y = [int(H * p) for p in (0.405, 0.510, 0.615, 0.720, 0.825)]
+    ROW_Y = [int(y * sy) for y in (146, 185, 224, 263, 302)]
 
     print(f"   📍 ROW_Y (px): {ROW_Y}")
     print(f"   📍 COL_X (px): {list(COL_X.values())}")
@@ -262,17 +267,17 @@ def generate_image(tokens: list[TokenData]) -> BytesIO:
 
     def draw_token_cell(x, y, symbol, price):
         price_text = f"${fmt_price(price)}"
-        gap = int(W * 0.012)
+        gap = max(4, int(8 * sx))
         s_bbox = draw.textbbox((0, 0), symbol, font=f_symbol)
         p_bbox = draw.textbbox((0, 0), price_text, font=f_price)
         sw = s_bbox[2] - s_bbox[0]
         pw = p_bbox[2] - p_bbox[0]
         total = sw + gap + pw
-        sx = x - total // 2
-        sy = y - (s_bbox[3] - s_bbox[1]) // 2 - s_bbox[1]
-        py = y - (p_bbox[3] - p_bbox[1]) // 2 - p_bbox[1]
-        draw.text((sx, sy), symbol, fill=(255, 255, 255), font=f_symbol)
-        draw.text((sx + sw + gap, py), price_text, fill=(210, 200, 225), font=f_price)
+        sx_pos = x - total // 2
+        sy_pos = y - (s_bbox[3] - s_bbox[1]) // 2 - s_bbox[1]
+        py_pos = y - (p_bbox[3] - p_bbox[1]) // 2 - p_bbox[1]
+        draw.text((sx_pos, sy_pos), symbol, fill=(255, 255, 255), font=f_symbol)
+        draw.text((sx_pos + sw + gap, py_pos), price_text, fill=(210, 200, 225), font=f_price)
 
     for i, t in enumerate(tokens[:5]):
         y = ROW_Y[i]
@@ -284,7 +289,7 @@ def generate_image(tokens: list[TokenData]) -> BytesIO:
         center_text(COL_X["mcap"], y, mcap, f_num, (230, 225, 245))
 
     if DEBUG:
-        r = max(5, int(W * 0.008))
+        r = max(4, int(5 * sx))
         for y in ROW_Y:
             for col_x in COL_X.values():
                 draw.ellipse([col_x - r, y - r, col_x + r, y + r], fill=(255, 0, 0))
