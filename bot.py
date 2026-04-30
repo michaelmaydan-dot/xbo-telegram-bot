@@ -227,24 +227,23 @@ def fetch_top5_tokens() -> list[TokenData]:
 def generate_image(tokens: list[TokenData]) -> BytesIO:
     from PIL import Image, ImageDraw, ImageFont
 
-    DEBUG = True  # ⚠️ красные точки. Поставить False когда настроено идеально.
+    DEBUG = False  # красные точки для калибровки. Поставь True если нужно проверить координаты.
 
     img = Image.open(TEMPLATE_PATH).convert("RGB")
     W, H = img.size
     draw = ImageDraw.Draw(img)
-    print(f"   📐 Размер шаблона: {W}x{H}")
 
-    # Точные координаты центров капсул для 640x360 (измерены в Paint)
+    # Координаты для базы 640x360, масштабируются под любое разрешение
     sx = W / 640
     sy = H / 360
 
     try:
         fb = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
         fn = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-        f_symbol = ImageFont.truetype(fb, max(10, int(17 * sy)))
-        f_price = ImageFont.truetype(fn, max(9, int(14 * sy)))
-        f_gain = ImageFont.truetype(fb, max(10, int(18 * sy)))
-        f_num = ImageFont.truetype(fn, max(9, int(14 * sy)))
+        f_symbol = ImageFont.truetype(fb, max(8, int(14 * sy)))
+        f_price = ImageFont.truetype(fn, max(7, int(11 * sy)))
+        f_gain = ImageFont.truetype(fb, max(8, int(15 * sy)))
+        f_num = ImageFont.truetype(fn, max(7, int(11 * sy)))
     except OSError:
         f_symbol = f_price = f_gain = f_num = ImageFont.load_default()
 
@@ -255,9 +254,6 @@ def generate_image(tokens: list[TokenData]) -> BytesIO:
         "mcap":  int(526 * sx),
     }
     ROW_Y = [int(y * sy) for y in (140, 178, 216, 254, 292)]
-
-    print(f"   📍 ROW_Y (px): {ROW_Y}")
-    print(f"   📍 COL_X (px): {list(COL_X.values())}")
 
     def center_text(x, y, text, font, fill):
         bbox = draw.textbbox((0, 0), text, font=font)
