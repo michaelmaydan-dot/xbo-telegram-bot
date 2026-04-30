@@ -227,14 +227,14 @@ def fetch_top5_tokens() -> list[TokenData]:
 def generate_image(tokens: list[TokenData]) -> BytesIO:
     from PIL import Image, ImageDraw, ImageFont
 
-    DEBUG = True  # ⚠️ красные точки. Убрать когда настроено.
+    DEBUG = True  # ⚠️ красные точки. Поставить False когда настроено идеально.
 
     img = Image.open(TEMPLATE_PATH).convert("RGB")
     W, H = img.size
     draw = ImageDraw.Draw(img)
     print(f"   📐 Размер шаблона: {W}x{H}")
 
-    # Базовые размеры подобраны под 640x360, масштабируются при других разрешениях
+    # Точные координаты центров капсул для 640x360 (измерены в Paint)
     sx = W / 640
     sy = H / 360
 
@@ -248,14 +248,13 @@ def generate_image(tokens: list[TokenData]) -> BytesIO:
     except OSError:
         f_symbol = f_price = f_gain = f_num = ImageFont.load_default()
 
-    # Центры капсул — измерены прямо по template.png 640x360
     COL_X = {
-        "token": int(154 * sx),
-        "gain":  int(275 * sx),
-        "vol":   int(408 * sx),
-        "mcap":  int(539 * sx),
+        "token": int(142 * sx),
+        "gain":  int(291 * sx),
+        "vol":   int(407 * sx),
+        "mcap":  int(526 * sx),
     }
-    ROW_Y = [int(y * sy) for y in (146, 185, 224, 263, 302)]
+    ROW_Y = [int(y * sy) for y in (140, 178, 216, 254, 292)]
 
     print(f"   📍 ROW_Y (px): {ROW_Y}")
     print(f"   📍 COL_X (px): {list(COL_X.values())}")
