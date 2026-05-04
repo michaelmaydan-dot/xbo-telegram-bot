@@ -13,6 +13,7 @@ from dataclasses import dataclass
 
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
+TELEGRAM_THREAD_ID = os.environ.get("TELEGRAM_THREAD_ID")
 XBO_SPOT_BASE = "https://www.xbo.com/platform/spot"
 XBO_API_BASE = "https://api.xbo.com"
 TEMPLATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "template.png")
@@ -227,13 +228,12 @@ def fetch_top5_tokens() -> list[TokenData]:
 def generate_image(tokens: list[TokenData]) -> BytesIO:
     from PIL import Image, ImageDraw, ImageFont
 
-    DEBUG = False  # красные точки для калибровки. Поставь True если нужно проверить координаты.
+    DEBUG = False
 
     img = Image.open(TEMPLATE_PATH).convert("RGB")
     W, H = img.size
     draw = ImageDraw.Draw(img)
 
-    # Координаты для базы 640x360, масштабируются под любое разрешение
     sx = W / 640
     sy = H / 360
 
@@ -325,23 +325,73 @@ def build_post(tokens):
     return "\n".join(lines)
 
 
+def _resolve_thread_id():
+    if not TELEGRAM_THREAD_ID:
+        return None
+    try:
+        return int(TELEGRAM_THREAD_ID)
+    except ValueError:
+        print(f"⚠️ TELEGRAM_THREAD_ID не число: '{TELEGRAM_THREAD_ID}', игнорируем")
+        return None
+
+
 def send_telegram(text, image=None):
     try:
+        thread_id = _resolve_thread_id()
+
         if image:
+            # У captions Telegram лимит 1024 символа
+            if len(text) > 1024:
+                print(f"⚠️ Caption {len(text)} > 1024 — отправлю фото и текст отдельными сообщениями")
+                # Сначала фото без caption
+                data1 = {"chat_id": TELEGRAM_CHAT_ID}
+                if thread_id is not None:
+                    data1["message_thread_id"] = thread_id
+                r1 = requests.post(
+                    f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto",
+                    data=data1,
+                    files={"photo": ("top5.png", image, "image/png")}, timeout=30)
+                res1 = r1.json()
+                if not res1.get("ok"):
+                    print(f"❌ sendPhoto: status={r1.status_code} code={res1.get('error_code')} desc={res1.get('description')}")
+                    return False
+                # Затем текст отдельно
+                payload2 = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML",
+                            "disable_web_page_preview": True}
+                if thread_id is not None:
+                    payload2["message_thread_id"] = thread_id
+                r2 = requests.post(
+                    f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+                    json=payload2, timeout=30)
+                res2 = r2.json()
+                if not res2.get("ok"):
+                    print(f"❌ sendMessage: status={r2.status_code} code={res2.get('error_code')} desc={res2.get('description')}")
+                    return False
+                print("✅ Отправлено в Telegram (фото + текст отдельно)")
+                return True
+
+            data = {"chat_id": TELEGRAM_CHAT_ID, "caption": text, "parse_mode": "HTML"}
+            if thread_id is not None:
+                data["message_thread_id"] = thread_id
             r = requests.post(
                 f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto",
-                data={"chat_id": TELEGRAM_CHAT_ID, "caption": text, "parse_mode": "HTML"},
+                data=data,
                 files={"photo": ("top5.png", image, "image/png")}, timeout=30)
         else:
+            payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML",
+                       "disable_web_page_preview": True}
+            if thread_id is not None:
+                payload["message_thread_id"] = thread_id
             r = requests.post(
                 f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
-                json={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"},
-                timeout=30)
+                json=payload, timeout=30)
+
         res = r.json()
         if res.get("ok"):
             print("✅ Отправлено в Telegram!")
             return True
-        print(f"❌ Telegram: {res}")
+        print(f"❌ Telegram: status={r.status_code} ok={res.get('ok')} "
+              f"code={res.get('error_code')} desc={res.get('description')}")
         return False
     except Exception as e:
         print(f"❌ Ошибка: {e}")
