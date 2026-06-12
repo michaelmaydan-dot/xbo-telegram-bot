@@ -315,7 +315,7 @@ def build_post(tokens):
         url = f"{XBO_SPOT_BASE}/{t.symbol}-USDT"
         lines.append(
             f"💎 <b>${t.symbol}</b>\n"
-            f"   Price: <code>${fmt_price(t.price)}</code>\n"
+            f"   Price: <b>${fmt_price(t.price)}</b>\n"
             f"   24H Performance: <b>+{t.daily_gain:.2f}%</b>\n"
             f"   🔗 Trade Now: {url}\n")
     return "\n".join(lines)
