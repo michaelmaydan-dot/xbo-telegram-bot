@@ -313,14 +313,10 @@ def build_post(tokens):
     lines = ["🔥 <b>Top 5 Tokens on XBO.com in 24h!</b>\n"]
     for t in tokens:
         url = f"{XBO_SPOT_BASE}/{t.symbol}-USDT"
-        v = f"${fmt_num(t.trading_volume)}" if t.trading_volume else "N/A"
-        m = f"${fmt_num(t.market_cap)}" if t.market_cap else "N/A"
         lines.append(
             f"💎 <b>${t.symbol}</b>\n"
             f"   Price: <code>${fmt_price(t.price)}</code>\n"
             f"   24H Performance: <b>+{t.daily_gain:.2f}%</b>\n"
-            f"   Trading Volume: <code>{v}</code>\n"
-            f"   Market Cap: <code>{m}</code>\n"
             f"   🔗 Trade Now: {url}\n")
     return "\n".join(lines)
 
@@ -340,10 +336,8 @@ def send_telegram(text, image=None):
         thread_id = _resolve_thread_id()
 
         if image:
-            # У captions Telegram лимит 1024 символа
             if len(text) > 1024:
                 print(f"⚠️ Caption {len(text)} > 1024 — отправлю фото и текст отдельными сообщениями")
-                # Сначала фото без caption
                 data1 = {"chat_id": TELEGRAM_CHAT_ID}
                 if thread_id is not None:
                     data1["message_thread_id"] = thread_id
@@ -355,7 +349,6 @@ def send_telegram(text, image=None):
                 if not res1.get("ok"):
                     print(f"❌ sendPhoto: status={r1.status_code} code={res1.get('error_code')} desc={res1.get('description')}")
                     return False
-                # Затем текст отдельно
                 payload2 = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML",
                             "disable_web_page_preview": True}
                 if thread_id is not None:
