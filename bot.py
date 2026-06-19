@@ -9,14 +9,16 @@ import time
 import requests
 from datetime import datetime, timezone
 from io import BytesIO
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 TELEGRAM_THREAD_ID = os.environ.get("TELEGRAM_THREAD_ID")
 XBO_SPOT_BASE = "https://www.xbo.com/platform/spot"
 XBO_API_BASE = "https://api.xbo.com"
-TEMPLATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "template.png")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+TEMPLATE_PATH = os.path.join(BASE_DIR, "template.png")
+LOGOS_DIR = os.path.join(BASE_DIR, "logos")
 
 
 @dataclass
@@ -26,6 +28,7 @@ class TokenData:
     daily_gain: float
     trading_volume: float
     market_cap: float
+    logo_url: str = ""
 
 
 def fetch_from_website() -> list[TokenData]:
@@ -208,6 +211,7 @@ def enrich_with_coingecko(tokens: list[TokenData]):
                 if t:
                     t.market_cap = float(coin.get("market_cap") or 0)
                     t.trading_volume = float(coin.get("total_volume") or 0)
+                    t.logo_url = coin.get("image") or ""
     except Exception as e:
         print(f"  CoinGecko ошибка: {e}")
 
@@ -216,6 +220,8 @@ def fetch_top5_tokens() -> list[TokenData]:
     tokens = fetch_from_website()
     if tokens and len(tokens) >= 5:
         print(f"✅ Данные со страницы ({len(tokens)} токенов)")
+        # Дообогащаем логотипами через CoinGecko
+        enrich_with_coingecko(tokens)
         return tokens
     print("\n📡 Пробуем API...")
     tokens = fetch_from_api()
@@ -225,72 +231,109 @@ def fetch_top5_tokens() -> list[TokenData]:
     return []
 
 
+def _make_circular(logo, size):
+    from PIL import Image, ImageDraw
+    logo = logo.resize((size, size), Image.LANCZOS)
+    mask = Image.new("L", (size, size), 0)
+    ImageDraw.Draw(mask).ellipse((0, 0, size, size), fill=255)
+    output = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    output.paste(logo, (0, 0), mask)
+    return output
+
+
+def _create_text_logo(ticker, size):
+    from PIL import Image, ImageDraw, ImageFont
+    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    draw.ellipse((0, 0, size, size), fill=(120, 120, 130, 255))
+    try:
+        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+                                   max(8, int(size * 0.3)))
+        text = ticker if len(ticker) <= 5 else ticker[:4]
+        bbox = draw.textbbox((0, 0), text, font=font)
+        tw = bbox[2] - bbox[0]
+        th = bbox[3] - bbox[1]
+        draw.text(((size - tw) // 2, (size - th) // 2 - bbox[1]),
+                  text, fill=(255, 255, 255, 255), font=font)
+    except OSError:
+        pass
+    return img
+
+
+def get_token_logo(token: TokenData, size: int):
+    from PIL import Image
+    # 1. CoinGecko
+    if token.logo_url:
+        try:
+            r = requests.get(token.logo_url, timeout=10)
+            if r.status_code == 200:
+                logo = Image.open(BytesIO(r.content)).convert("RGBA")
+                return _make_circular(logo, size)
+        except Exception as e:
+            print(f"  ⚠️ Лого {token.symbol} с CoinGecko не загрузилось: {e}")
+    # 2. Local logos/ folder
+    local_path = os.path.join(LOGOS_DIR, f"{token.symbol}.png")
+    if os.path.exists(local_path):
+        try:
+            logo = Image.open(local_path).convert("RGBA")
+            return _make_circular(logo, size)
+        except Exception as e:
+            print(f"  ⚠️ Лого {token.symbol} из logos/ не загрузилось: {e}")
+    # 3. Grey circle with ticker
+    print(f"  ℹ️ Логотип {token.symbol} не найден, используем серый круг")
+    return _create_text_logo(token.symbol, size)
+
+
 def generate_image(tokens: list[TokenData]) -> BytesIO:
     from PIL import Image, ImageDraw, ImageFont
 
-    DEBUG = False
+    DEBUG = False  # True → красные точки для калибровки координат
 
-    img = Image.open(TEMPLATE_PATH).convert("RGB")
+    img = Image.open(TEMPLATE_PATH).convert("RGBA")
     W, H = img.size
     draw = ImageDraw.Draw(img)
 
-    sx = W / 640
-    sy = H / 360
-
+    # Шрифты (DejaVu Sans вместо Apertura, размеры по спеке)
     try:
         fb = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-        fn = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-        f_symbol = ImageFont.truetype(fb, max(8, int(14 * sy)))
-        f_price = ImageFont.truetype(fn, max(7, int(11 * sy)))
-        f_gain = ImageFont.truetype(fb, max(8, int(15 * sy)))
-        f_num = ImageFont.truetype(fn, max(7, int(11 * sy)))
+        f_badge = ImageFont.truetype(fb, 14)   # +XX.XX% на зелёной плашке
+        f_name = ImageFont.truetype(fb, 20)    # тикер UNI и цена $3.56
     except OSError:
-        f_symbol = f_price = f_gain = f_num = ImageFont.load_default()
+        f_badge = f_name = ImageFont.load_default()
 
-    COL_X = {
-        "token": int(142 * sx),
-        "gain":  int(291 * sx),
-        "vol":   int(407 * sx),
-        "mcap":  int(526 * sx),
-    }
-    ROW_Y = [int(y * sy) for y in (140, 178, 216, 254, 292)]
+    # Координаты для 640x360 — 5 карточек по горизонтали
+    CARD_X = [70, 195, 320, 445, 570]
+    BADGE_Y = 105
+    LOGO_Y = 155
+    NAME_Y = 217
+    PRICE_Y = 240
+    LOGO_SIZE = 50
 
-    def center_text(x, y, text, font, fill):
+    def draw_centered(x, y, text, font, fill):
         bbox = draw.textbbox((0, 0), text, font=font)
-        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        tw = bbox[2] - bbox[0]
+        th = bbox[3] - bbox[1]
         draw.text((x - tw // 2, y - th // 2 - bbox[1]), text, fill=fill, font=font)
 
-    def draw_token_cell(x, y, symbol, price):
-        price_text = f"${fmt_price(price)}"
-        gap = max(4, int(8 * sx))
-        s_bbox = draw.textbbox((0, 0), symbol, font=f_symbol)
-        p_bbox = draw.textbbox((0, 0), price_text, font=f_price)
-        sw = s_bbox[2] - s_bbox[0]
-        pw = p_bbox[2] - p_bbox[0]
-        total = sw + gap + pw
-        sx_pos = x - total // 2
-        sy_pos = y - (s_bbox[3] - s_bbox[1]) // 2 - s_bbox[1]
-        py_pos = y - (p_bbox[3] - p_bbox[1]) // 2 - p_bbox[1]
-        draw.text((sx_pos, sy_pos), symbol, fill=(255, 255, 255), font=f_symbol)
-        draw.text((sx_pos + sw + gap, py_pos), price_text, fill=(210, 200, 225), font=f_price)
-
     for i, t in enumerate(tokens[:5]):
-        y = ROW_Y[i]
-        draw_token_cell(COL_X["token"], y, t.symbol, t.price)
-        center_text(COL_X["gain"], y, f"{t.daily_gain:.2f}%", f_gain, (0, 230, 180))
-        vol = f"${int(t.trading_volume):,}" if t.trading_volume else "N/A"
-        mcap = f"${int(t.market_cap):,}" if t.market_cap else "N/A"
-        center_text(COL_X["vol"], y, vol, f_num, (230, 225, 245))
-        center_text(COL_X["mcap"], y, mcap, f_num, (230, 225, 245))
+        x = CARD_X[i]
+        # 1. Процент на зелёной плашке
+        draw_centered(x, BADGE_Y, f"+{t.daily_gain:.2f}%", f_badge, (255, 255, 255))
+        # 2. Круглый логотип
+        logo = get_token_logo(t, LOGO_SIZE)
+        img.paste(logo, (x - LOGO_SIZE // 2, LOGO_Y - LOGO_SIZE // 2), logo)
+        # 3. Тикер
+        draw_centered(x, NAME_Y, t.symbol, f_name, (255, 255, 255))
+        # 4. Цена
+        draw_centered(x, PRICE_Y, f"${fmt_price(t.price)}", f_name, (255, 255, 255))
 
     if DEBUG:
-        r = max(4, int(5 * sx))
-        for y in ROW_Y:
-            for col_x in COL_X.values():
-                draw.ellipse([col_x - r, y - r, col_x + r, y + r], fill=(255, 0, 0))
+        for x in CARD_X:
+            for y in (BADGE_Y, LOGO_Y, NAME_Y, PRICE_Y):
+                draw.ellipse([x - 3, y - 3, x + 3, y + 3], fill=(255, 0, 0))
 
     buf = BytesIO()
-    img.save(buf, format="PNG", quality=95)
+    img.convert("RGB").save(buf, format="PNG", quality=95)
     buf.seek(0)
     return buf
 
@@ -310,14 +353,14 @@ def fmt_num(n):
 
 
 def build_post(tokens):
-    lines = ["🔥 <b>Top 5 Tokens on XBO.com in 24h!</b>\n"]
+    lines = ["🔝 <b>Top 5 Movers on XBO.com in 24h</b> 📊\n"]
     for t in tokens:
         url = f"{XBO_SPOT_BASE}/{t.symbol}-USDT"
+        display = f"xbo.com/platform/spot/{t.symbol}-USDT"
         lines.append(
-            f"💎 <b>${t.symbol}</b>\n"
-            f"   Price: <b>${fmt_price(t.price)}</b>\n"
-            f"   24H Performance: <b>+{t.daily_gain:.2f}%</b>\n"
-            f"   🔗 Trade Now: {url}\n")
+            f"🟢 <b>${t.symbol}</b> | <b>${fmt_price(t.price)}</b> | <b>+{t.daily_gain:.2f}%</b>\n"
+            f'🔗 Trade Now: <a href="{url}">{display}</a>\n')
+    lines.append('\n👉 <a href="https://www.xbo.com/platform/spot">xbo.com/platform/spot</a> 🔗')
     return "\n".join(lines)
 
 
@@ -400,7 +443,7 @@ def main():
         exit(1)
     print(f"\n📊 Топ-5:")
     for t in tokens:
-        print(f"   {t.symbol}: ${fmt_price(t.price)} | +{t.daily_gain}% | Vol: ${fmt_num(t.trading_volume)} | MCap: ${fmt_num(t.market_cap)}")
+        print(f"   {t.symbol}: ${fmt_price(t.price)} | +{t.daily_gain}% | logo={'✓' if t.logo_url else '✗'}")
     try:
         image = generate_image(tokens)
         print("🖼️ Картинка готова")
