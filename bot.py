@@ -33,7 +33,7 @@ class TokenData:
     daily_gain: float
     trading_volume: float
     market_cap: float
-    logo_url: str = ""  # CoinGecko URL, как fallback если XBO CDN не сработал
+    logo_url: str = ""
 
 
 def fetch_from_website() -> list[TokenData]:
@@ -193,8 +193,6 @@ def fetch_from_api() -> list[TokenData]:
 
 
 def enrich_with_coingecko(tokens: list[TokenData]):
-    """Дополняем market_cap, trading_volume и логотип (как fallback) через CoinGecko
-    с валидацией по цене — на случай если на XBO CDN нет нужного лого."""
     try:
         coins_list = requests.get("https://api.coingecko.com/api/v3/coins/list", timeout=15).json()
         sym_to_ids = {}
@@ -233,7 +231,7 @@ def enrich_with_coingecko(tokens: list[TokenData]):
                 diff = abs(math.log(cg_price / t.price))
                 if diff < best_diff:
                     best_diff, best = diff, c
-            if best and best_diff < 0.4:  # цена в пределах ±50%
+            if best and best_diff < 0.4:
                 t.market_cap = float(best.get("market_cap") or 0)
                 t.trading_volume = float(best.get("total_volume") or 0)
                 if not t.logo_url:
@@ -293,7 +291,6 @@ def _create_text_logo(ticker, size):
 
 
 def _try_download_logo(url, size):
-    """Скачать и обрезать в круг. Вернёт None если не получилось или это не картинка."""
     from PIL import Image, UnidentifiedImageError
     try:
         r = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
@@ -304,19 +301,12 @@ def _try_download_logo(url, size):
             return None
         logo = Image.open(BytesIO(r.content)).convert("RGBA")
         return _make_circular(logo, size)
-    except (UnidentifiedImageError, OSError, requests.exceptions.RequestException) as e:
+    except (UnidentifiedImageError, OSError, requests.exceptions.RequestException):
         return None
 
 
 def get_token_logo(token: TokenData, size: int):
-    """Приоритет:
-    1) logos/{TICKER}.png (ручной override)
-    2) XBO CDN: assets.xbo.com/token-icons/png/{TICKER}.png (точно тот же лого что на сайте)
-    3) CoinGecko (с валидацией по цене)
-    4) Серый круг с тикером
-    """
     from PIL import Image
-    # 1. Local override
     local_path = os.path.join(LOGOS_DIR, f"{token.symbol}.png")
     if os.path.exists(local_path):
         try:
@@ -325,22 +315,16 @@ def get_token_logo(token: TokenData, size: int):
             return _make_circular(logo, size)
         except Exception as e:
             print(f"  ⚠️ logos/{token.symbol}.png не загрузилось: {e}")
-
-    # 2. XBO CDN
     cdn_url = f"{XBO_LOGO_CDN}/{token.symbol}.png"
     cdn_logo = _try_download_logo(cdn_url, size)
     if cdn_logo:
         print(f"  ✅ Лого {token.symbol}: XBO CDN")
         return cdn_logo
-
-    # 3. CoinGecko (если price-валидация дала URL)
     if token.logo_url:
         cg_logo = _try_download_logo(token.logo_url, size)
         if cg_logo:
             print(f"  ✅ Лого {token.symbol}: CoinGecko")
             return cg_logo
-
-    # 4. Grey circle
     print(f"  ℹ️ Лого {token.symbol} не найдено, серый круг")
     return _create_text_logo(token.symbol, size)
 
@@ -348,7 +332,7 @@ def get_token_logo(token: TokenData, size: int):
 def generate_image(tokens: list[TokenData]) -> BytesIO:
     from PIL import Image, ImageDraw
 
-    DEBUG = True  # красные точки для калибровки координат
+    DEBUG = True  # ⚠️ красные точки. Поставь False когда настроено.
 
     img = Image.open(TEMPLATE_PATH).convert("RGBA")
     W, H = img.size
@@ -358,11 +342,12 @@ def generate_image(tokens: list[TokenData]) -> BytesIO:
     f_badge = _load_font(FONT_MEDIUM, 14)
     f_name = _load_font(FONT_BLACK, 20)
 
-    CARD_X = [70, 195, 320, 445, 570]
-    BADGE_Y = 105
-    LOGO_Y = 155
-    NAME_Y = 217
-    PRICE_Y = 240
+    # Координаты замерены в Paint по template.png
+    CARD_X = [89, 202, 320, 434, 549]
+    BADGE_Y = 107
+    LOGO_Y = 157
+    NAME_Y = 230
+    PRICE_Y = 252
     LOGO_SIZE = 50
 
     def draw_centered(x, y, text, font, fill):
