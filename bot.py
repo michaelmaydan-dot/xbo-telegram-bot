@@ -23,6 +23,7 @@ TEMPLATE_PATH = os.path.join(BASE_DIR, "template.png")
 LOGOS_DIR = os.path.join(BASE_DIR, "logos")
 FONT_BLACK = os.path.join(BASE_DIR, "fonts", "fonnts.com-Apertura_Black.otf")
 FONT_MEDIUM = os.path.join(BASE_DIR, "fonts", "fonnts.com-Apertura_Medium.otf")
+FONT_REGULAR = os.path.join(BASE_DIR, "fonts", "fonnts.com-Apertura_Regular.otf")
 FONT_FALLBACK = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 
 
@@ -332,7 +333,7 @@ def get_token_logo(token: TokenData, size: int):
 def generate_image(tokens: list[TokenData]) -> BytesIO:
     from PIL import Image, ImageDraw
 
-    DEBUG = True  # ⚠️ красные точки. Поставь False когда настроено.
+    DEBUG = False  # красные точки для калибровки
 
     img = Image.open(TEMPLATE_PATH).convert("RGBA")
     W, H = img.size
@@ -340,9 +341,9 @@ def generate_image(tokens: list[TokenData]) -> BytesIO:
     print(f"   📐 Размер шаблона: {W}x{H}")
 
     f_badge = _load_font(FONT_MEDIUM, 14)
-    f_name = _load_font(FONT_BLACK, 20)
+    f_ticker = _load_font(FONT_REGULAR, 20)  # тикер: НЕ жирный (Apertura Regular)
+    f_price = _load_font(FONT_BLACK, 20)     # цена: жирный (Apertura Black)
 
-    # Координаты замерены в Paint по template.png
     CARD_X = [89, 202, 320, 434, 549]
     BADGE_Y = 107
     LOGO_Y = 157
@@ -361,8 +362,8 @@ def generate_image(tokens: list[TokenData]) -> BytesIO:
         draw_centered(x, BADGE_Y, f"+{t.daily_gain:.2f}%", f_badge, (255, 255, 255))
         logo = get_token_logo(t, LOGO_SIZE)
         img.paste(logo, (x - LOGO_SIZE // 2, LOGO_Y - LOGO_SIZE // 2), logo)
-        draw_centered(x, NAME_Y, t.symbol, f_name, (255, 255, 255))
-        draw_centered(x, PRICE_Y, f"${fmt_price(t.price)}", f_name, (255, 255, 255))
+        draw_centered(x, NAME_Y, t.symbol, f_ticker, (255, 255, 255))
+        draw_centered(x, PRICE_Y, f"${fmt_price(t.price)}", f_price, (255, 255, 255))
 
     if DEBUG:
         for x in CARD_X:
