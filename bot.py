@@ -363,7 +363,7 @@ def generate_image(tokens: list[TokenData]) -> BytesIO:
     LOGO_Y = 157
     NAME_Y = 230
     PRICE_Y = 252
-    LOGO_SIZE = 44
+    LOGO_SIZE = 50  # диаметр круглого логотипа по спеке
 
     def draw_centered(x, y, text, font, fill):
         bbox = draw.textbbox((0, 0), text, font=font)
