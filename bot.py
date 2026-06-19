@@ -19,6 +19,9 @@ XBO_API_BASE = "https://api.xbo.com"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE_PATH = os.path.join(BASE_DIR, "template.png")
 LOGOS_DIR = os.path.join(BASE_DIR, "logos")
+FONT_BLACK = os.path.join(BASE_DIR, "fonts", "fonnts.com-Apertura_Black.otf")
+FONT_MEDIUM = os.path.join(BASE_DIR, "fonts", "fonnts.com-Apertura_Medium.otf")
+FONT_FALLBACK = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 
 
 @dataclass
@@ -220,7 +223,6 @@ def fetch_top5_tokens() -> list[TokenData]:
     tokens = fetch_from_website()
     if tokens and len(tokens) >= 5:
         print(f"✅ Данные со страницы ({len(tokens)} токенов)")
-        # Дообогащаем логотипами через CoinGecko
         enrich_with_coingecko(tokens)
         return tokens
     print("\n📡 Пробуем API...")
@@ -229,6 +231,18 @@ def fetch_top5_tokens() -> list[TokenData]:
         print(f"✅ Данные из API ({len(tokens)} токенов)")
         return tokens
     return []
+
+
+def _load_font(path, size):
+    from PIL import ImageFont
+    try:
+        return ImageFont.truetype(path, size)
+    except OSError as e:
+        print(f"  ⚠️ Не удалось загрузить шрифт {path}: {e}")
+        try:
+            return ImageFont.truetype(FONT_FALLBACK, size)
+        except OSError:
+            return ImageFont.load_default()
 
 
 def _make_circular(logo, size):
@@ -242,27 +256,22 @@ def _make_circular(logo, size):
 
 
 def _create_text_logo(ticker, size):
-    from PIL import Image, ImageDraw, ImageFont
+    from PIL import Image, ImageDraw
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     draw.ellipse((0, 0, size, size), fill=(120, 120, 130, 255))
-    try:
-        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-                                   max(8, int(size * 0.3)))
-        text = ticker if len(ticker) <= 5 else ticker[:4]
-        bbox = draw.textbbox((0, 0), text, font=font)
-        tw = bbox[2] - bbox[0]
-        th = bbox[3] - bbox[1]
-        draw.text(((size - tw) // 2, (size - th) // 2 - bbox[1]),
-                  text, fill=(255, 255, 255, 255), font=font)
-    except OSError:
-        pass
+    font = _load_font(FONT_BLACK, max(8, int(size * 0.3)))
+    text = ticker if len(ticker) <= 5 else ticker[:4]
+    bbox = draw.textbbox((0, 0), text, font=font)
+    tw = bbox[2] - bbox[0]
+    th = bbox[3] - bbox[1]
+    draw.text(((size - tw) // 2, (size - th) // 2 - bbox[1]),
+              text, fill=(255, 255, 255, 255), font=font)
     return img
 
 
 def get_token_logo(token: TokenData, size: int):
     from PIL import Image
-    # 1. CoinGecko
     if token.logo_url:
         try:
             r = requests.get(token.logo_url, timeout=10)
@@ -271,7 +280,6 @@ def get_token_logo(token: TokenData, size: int):
                 return _make_circular(logo, size)
         except Exception as e:
             print(f"  ⚠️ Лого {token.symbol} с CoinGecko не загрузилось: {e}")
-    # 2. Local logos/ folder
     local_path = os.path.join(LOGOS_DIR, f"{token.symbol}.png")
     if os.path.exists(local_path):
         try:
@@ -279,13 +287,12 @@ def get_token_logo(token: TokenData, size: int):
             return _make_circular(logo, size)
         except Exception as e:
             print(f"  ⚠️ Лого {token.symbol} из logos/ не загрузилось: {e}")
-    # 3. Grey circle with ticker
     print(f"  ℹ️ Логотип {token.symbol} не найден, используем серый круг")
     return _create_text_logo(token.symbol, size)
 
 
 def generate_image(tokens: list[TokenData]) -> BytesIO:
-    from PIL import Image, ImageDraw, ImageFont
+    from PIL import Image, ImageDraw
 
     DEBUG = False  # True → красные точки для калибровки координат
 
@@ -293,15 +300,11 @@ def generate_image(tokens: list[TokenData]) -> BytesIO:
     W, H = img.size
     draw = ImageDraw.Draw(img)
 
-    # Шрифты (DejaVu Sans вместо Apertura, размеры по спеке)
-    try:
-        fb = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-        f_badge = ImageFont.truetype(fb, 14)   # +XX.XX% на зелёной плашке
-        f_name = ImageFont.truetype(fb, 20)    # тикер UNI и цена $3.56
-    except OSError:
-        f_badge = f_name = ImageFont.load_default()
+    # Apertura по спеке: Medium 14pt для плашки, Black 20pt для тикера и цены
+    f_badge = _load_font(FONT_MEDIUM, 14)
+    f_name = _load_font(FONT_BLACK, 20)
 
-    # Координаты для 640x360 — 5 карточек по горизонтали
+    # 5 карточек по горизонтали для 640x360
     CARD_X = [70, 195, 320, 445, 570]
     BADGE_Y = 105
     LOGO_Y = 155
@@ -317,14 +320,10 @@ def generate_image(tokens: list[TokenData]) -> BytesIO:
 
     for i, t in enumerate(tokens[:5]):
         x = CARD_X[i]
-        # 1. Процент на зелёной плашке
         draw_centered(x, BADGE_Y, f"+{t.daily_gain:.2f}%", f_badge, (255, 255, 255))
-        # 2. Круглый логотип
         logo = get_token_logo(t, LOGO_SIZE)
         img.paste(logo, (x - LOGO_SIZE // 2, LOGO_Y - LOGO_SIZE // 2), logo)
-        # 3. Тикер
         draw_centered(x, NAME_Y, t.symbol, f_name, (255, 255, 255))
-        # 4. Цена
         draw_centered(x, PRICE_Y, f"${fmt_price(t.price)}", f_name, (255, 255, 255))
 
     if DEBUG:
