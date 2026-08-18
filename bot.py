@@ -20,6 +20,7 @@ XBO_API_BASE = "https://api.xbo.com"
 XBO_LOGO_CDN = "https://assets.xbo.com/token-icons/png"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE_PATH = os.path.join(BASE_DIR, "template.png")
+TEMPLATE_INSTA_PATH = os.path.join(BASE_DIR, "template_insta.png")
 LOGOS_DIR = os.path.join(BASE_DIR, "logos")
 FONT_BLACK = os.path.join(BASE_DIR, "fonts", "fonnts.com-Apertura_Black.otf")
 FONT_MEDIUM = os.path.join(BASE_DIR, "fonts", "fonnts.com-Apertura_Medium.otf")
@@ -344,15 +345,14 @@ def get_token_logo(token: TokenData, size: int):
     return _create_text_logo(token.symbol, size)
 
 
-def generate_image(tokens: list[TokenData]) -> BytesIO:
+def generate_image_telegram(tokens: list[TokenData]) -> BytesIO:
+    """Горизонтальная картинка 640x360 для Telegram."""
     from PIL import Image, ImageDraw
-
-    DEBUG = False
 
     img = Image.open(TEMPLATE_PATH).convert("RGBA")
     W, H = img.size
     draw = ImageDraw.Draw(img)
-    print(f"   📐 Размер шаблона: {W}x{H}")
+    print(f"   📐 Шаблон TG: {W}x{H}")
 
     f_badge = _load_font(FONT_MEDIUM, 14)
     f_ticker = _load_font(FONT_REGULAR, 20)
@@ -363,7 +363,7 @@ def generate_image(tokens: list[TokenData]) -> BytesIO:
     LOGO_Y = 157
     NAME_Y = 230
     PRICE_Y = 252
-    LOGO_SIZE = 50  # диаметр круглого логотипа по спеке
+    LOGO_SIZE = 50
 
     def draw_centered(x, y, text, font, fill):
         bbox = draw.textbbox((0, 0), text, font=font)
@@ -379,10 +379,50 @@ def generate_image(tokens: list[TokenData]) -> BytesIO:
         draw_centered(x, NAME_Y, t.symbol, f_ticker, (255, 255, 255))
         draw_centered(x, PRICE_Y, f"${fmt_price(t.price)}", f_price, (255, 255, 255))
 
-    if DEBUG:
-        for x in CARD_X:
-            for y in (BADGE_Y, LOGO_Y, NAME_Y, PRICE_Y):
-                draw.ellipse([x - 3, y - 3, x + 3, y + 3], fill=(255, 0, 0))
+    buf = BytesIO()
+    img.convert("RGB").save(buf, format="PNG", quality=95)
+    buf.seek(0)
+    return buf
+
+
+def generate_image_insta(tokens: list[TokenData]) -> BytesIO:
+    """Вертикальная картинка 1080x1920 для Instagram."""
+    from PIL import Image, ImageDraw
+
+    img = Image.open(TEMPLATE_INSTA_PATH).convert("RGBA")
+    W, H = img.size
+    draw = ImageDraw.Draw(img)
+    print(f"   📐 Шаблон Insta: {W}x{H}")
+
+    f_badge = _load_font(FONT_MEDIUM, 32)
+    f_ticker = _load_font(FONT_REGULAR, 40)
+    f_price = _load_font(FONT_BLACK, 40)
+
+    ROW_Y = [592, 804, 1018, 1232, 1447]
+    LOGO_X = 220
+    TEXT_X = 376
+    BADGE_X = 840
+    LOGO_SIZE = 135
+
+    def draw_centered(x, y, text, font, fill):
+        bbox = draw.textbbox((0, 0), text, font=font)
+        tw = bbox[2] - bbox[0]
+        th = bbox[3] - bbox[1]
+        draw.text((x - tw // 2, y - th // 2 - bbox[1]), text, fill=fill, font=font)
+
+    def draw_left(x, y, text, font, fill):
+        bbox = draw.textbbox((0, 0), text, font=font)
+        th = bbox[3] - bbox[1]
+        draw.text((x, y - th // 2 - bbox[1]), text, fill=fill, font=font)
+        return bbox[2] - bbox[0]
+
+    for i, t in enumerate(tokens[:5]):
+        y = ROW_Y[i]
+        logo = get_token_logo(t, LOGO_SIZE)
+        img.paste(logo, (LOGO_X - LOGO_SIZE // 2, y - LOGO_SIZE // 2), logo)
+        ticker_w = draw_left(TEXT_X, y, t.symbol, f_ticker, (255, 255, 255))
+        draw_left(TEXT_X + ticker_w + 15, y, f"${fmt_price(t.price)}", f_price, (255, 255, 255))
+        draw_centered(BADGE_X, y, f"+{t.daily_gain:.2f}%", f_badge, (255, 255, 255))
 
     buf = BytesIO()
     img.convert("RGB").save(buf, format="PNG", quality=95)
@@ -426,61 +466,65 @@ def _resolve_thread_id():
         return None
 
 
-def send_telegram(text, image=None):
+def send_telegram(text, image_tg=None, image_insta=None):
     try:
         thread_id = _resolve_thread_id()
+        base_data = {"chat_id": TELEGRAM_CHAT_ID}
+        if thread_id is not None:
+            base_data["message_thread_id"] = thread_id
 
-        if image:
-            if len(text) > 1024:
-                print(f"⚠️ Caption {len(text)} > 1024 — отправлю фото и текст отдельными сообщениями")
-                data1 = {"chat_id": TELEGRAM_CHAT_ID}
-                if thread_id is not None:
-                    data1["message_thread_id"] = thread_id
+        # 1. Отправляем картинку для Telegram (с текстом если влезает)
+        if image_tg:
+            if len(text) <= 1024:
+                data = {**base_data, "caption": text, "parse_mode": "HTML"}
+                r = requests.post(
+                    f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto",
+                    data=data,
+                    files={"photo": ("top5_tg.png", image_tg, "image/png")}, timeout=30)
+                res = r.json()
+                if not res.get("ok"):
+                    print(f"❌ sendPhoto TG: {res.get('description')}")
+                    return False
+            else:
+                # Фото отдельно, текст отдельно
                 r1 = requests.post(
                     f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto",
-                    data=data1,
-                    files={"photo": ("top5.png", image, "image/png")}, timeout=30)
-                res1 = r1.json()
-                if not res1.get("ok"):
-                    print(f"❌ sendPhoto: status={r1.status_code} code={res1.get('error_code')} desc={res1.get('description')}")
+                    data=base_data,
+                    files={"photo": ("top5_tg.png", image_tg, "image/png")}, timeout=30)
+                if not r1.json().get("ok"):
+                    print(f"❌ sendPhoto TG: {r1.json().get('description')}")
                     return False
-                payload2 = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML",
-                            "disable_web_page_preview": True}
-                if thread_id is not None:
-                    payload2["message_thread_id"] = thread_id
+                payload = {**base_data, "text": text, "parse_mode": "HTML",
+                           "disable_web_page_preview": True}
                 r2 = requests.post(
                     f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
-                    json=payload2, timeout=30)
-                res2 = r2.json()
-                if not res2.get("ok"):
-                    print(f"❌ sendMessage: status={r2.status_code} code={res2.get('error_code')} desc={res2.get('description')}")
+                    json=payload, timeout=30)
+                if not r2.json().get("ok"):
+                    print(f"❌ sendMessage: {r2.json().get('description')}")
                     return False
-                print("✅ Отправлено в Telegram (фото + текст отдельно)")
-                return True
-
-            data = {"chat_id": TELEGRAM_CHAT_ID, "caption": text, "parse_mode": "HTML"}
-            if thread_id is not None:
-                data["message_thread_id"] = thread_id
-            r = requests.post(
-                f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto",
-                data=data,
-                files={"photo": ("top5.png", image, "image/png")}, timeout=30)
         else:
-            payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML",
+            payload = {**base_data, "text": text, "parse_mode": "HTML",
                        "disable_web_page_preview": True}
-            if thread_id is not None:
-                payload["message_thread_id"] = thread_id
             r = requests.post(
                 f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
                 json=payload, timeout=30)
+            if not r.json().get("ok"):
+                print(f"❌ sendMessage: {r.json().get('description')}")
+                return False
 
-        res = r.json()
-        if res.get("ok"):
-            print("✅ Отправлено в Telegram!")
-            return True
-        print(f"❌ Telegram: status={r.status_code} ok={res.get('ok')} "
-              f"code={res.get('error_code')} desc={res.get('description')}")
-        return False
+        # 2. Отправляем картинку для Instagram (как отдельное фото)
+        if image_insta:
+            r3 = requests.post(
+                f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto",
+                data=base_data,
+                files={"photo": ("top5_insta.png", image_insta, "image/png")}, timeout=30)
+            if r3.json().get("ok"):
+                print("✅ Insta-картинка отправлена")
+            else:
+                print(f"⚠️ Insta-картинка не отправлена: {r3.json().get('description')}")
+
+        print("✅ Отправлено в Telegram!")
+        return True
     except Exception as e:
         print(f"❌ Ошибка: {e}")
         return False
@@ -496,13 +540,24 @@ def main():
     print(f"\n📊 Топ-5:")
     for t in tokens:
         print(f"   {t.symbol}: ${fmt_price(t.price)} | +{t.daily_gain}%")
+
+    # Генерация картинки для Telegram (640x360)
+    image_tg = None
     try:
-        image = generate_image(tokens)
-        print("🖼️ Картинка готова")
+        image_tg = generate_image_telegram(tokens)
+        print("🖼️ TG-картинка готова")
     except Exception as e:
-        print(f"⚠️ Без картинки: {e}")
-        image = None
-    if not send_telegram(build_post(tokens), image):
+        print(f"⚠️ TG-картинка не создана: {e}")
+
+    # Генерация картинки для Instagram (1080x1920)
+    image_insta = None
+    try:
+        image_insta = generate_image_insta(tokens)
+        print("🖼️ Insta-картинка готова")
+    except Exception as e:
+        print(f"⚠️ Insta-картинка не создана: {e}")
+
+    if not send_telegram(build_post(tokens), image_tg, image_insta):
         exit(1)
 
 
