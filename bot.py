@@ -89,17 +89,8 @@ def fetch_from_website() -> list[TokenData]:
                 if (!changeMatch) continue;
                 const change = parseFloat(changeMatch[0].replace('%', ''));
                 if (isNaN(change) || change <= 0) continue;
-                const allNumbers = [];
-                const numRegex = /\$?\s*(\d[\d,]*\.?\d*)\s*([BMK])?/g;
-                let match;
-                while ((match = numRegex.exec(text)) !== null) {
-                    let num = parseFloat(match[1].replace(/,/g, ''));
-                    const suffix = match[2];
-                    if (suffix === 'B') num *= 1e9;
-                    else if (suffix === 'M') num *= 1e6;
-                    else if (suffix === 'K') num *= 1e3;
-                    allNumbers.push(num);
-                }
+
+                // Находим символ
                 const symbolMatch = text.match(/^[^\d]*?\b([A-Z][A-Z0-9]{1,9})\b/);
                 let symbol = symbolMatch ? symbolMatch[1] : '';
                 const symbolEl = row.querySelector('[class*="symbol"], [class*="Symbol"], [class*="name"], [class*="Name"], [class*="ticker"], [class*="Ticker"]');
@@ -108,6 +99,23 @@ def fetch_from_website() -> list[TokenData]:
                     const symMatch = symText.match(/^([A-Z][A-Z0-9]{1,9})/);
                     if (symMatch) symbol = symMatch[1];
                 }
+
+                // Извлекаем числа только те, что перед $ или после $ или перед M/B/K
+                // Пропускаем числа которые являются частью имени токена (SPX6900, 1INCH и т.д.)
+                const allNumbers = [];
+                const numRegex = /\$\s*(\d[\d,]*\.?\d*)\s*([BMK])?|(\d[\d,]*\.?\d+)\s*([BMK])|(\d[\d,]*\.\d+)/g;
+                let match;
+                while ((match = numRegex.exec(text)) !== null) {
+                    const raw = match[1] || match[3] || match[5];
+                    if (!raw) continue;
+                    let num = parseFloat(raw.replace(/,/g, ''));
+                    const suffix = match[2] || match[4];
+                    if (suffix === 'B') num *= 1e9;
+                    else if (suffix === 'M') num *= 1e6;
+                    else if (suffix === 'K') num *= 1e3;
+                    allNumbers.push(num);
+                }
+
                 if (symbol && allNumbers.length >= 1) {
                     results.push({symbol: symbol, change: change, numbers: allNumbers});
                 }
