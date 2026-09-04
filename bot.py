@@ -539,6 +539,16 @@ def send_telegram(text, image_tg=None, image_insta=None):
         return False
 
 
+def html_to_plain(html: str) -> str:
+    """Конвертирует HTML-текст в чистый текст для Cockpit."""
+    text = html
+    # <a href="URL">label</a> → URL
+    text = re.sub(r'<a\s+href="([^"]*)"[^>]*>[^<]*</a>', r'\1', text)
+    # Убираем все остальные теги
+    text = re.sub(r'<[^>]+>', '', text)
+    return text.strip()
+
+
 def send_cockpit(caption: str, image_tg: BytesIO | None, image_insta: BytesIO | None) -> bool:
     """Отправка в XBO Marketing Cockpit."""
     if not XBO_COCKPIT_TOKEN:
@@ -562,7 +572,7 @@ def send_cockpit(caption: str, image_tg: BytesIO | None, image_insta: BytesIO | 
             print("❌ Cockpit: нет картинок для отправки")
             return False
 
-        data = {"caption": caption, "date": today}
+        data = {"caption": html_to_plain(caption), "date": today}
 
         r = requests.post(url, headers=headers, files=files, data=data, timeout=60)
         result = r.json()
