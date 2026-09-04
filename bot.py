@@ -459,9 +459,10 @@ def build_post(tokens):
         url = f"{XBO_SPOT_BASE}/{t.symbol}-USDT"
         display = f"xbo.com/platform/spot/{t.symbol}-USDT"
         lines.append(
-            f"🟢 <b>${t.symbol}</b> | <b>${fmt_price(t.price)}</b> | <b>+{t.daily_gain:.2f}%</b>\n"
+            f"🟢 <b>${t.symbol}</b> | <b>${fmt_price(t.price)}</b> (+{t.daily_gain:.2f}%)\n"
             f'🔗 Trade Now: <a href="{url}">{display}</a>\n')
-    lines.append('\n👉 <a href="https://www.xbo.com/platform/spot">xbo.com/platform/spot</a> 🔗')
+    lines.append('\nHold $XBO. Pay less in fees. 💟')
+    lines.append('👉 <a href="https://www.xbo.com/platform/spot/XBO-USDT">xbo.com/platform/spot/XBO-USDT</a> 🔗')
     return "\n".join(lines)
 
 
