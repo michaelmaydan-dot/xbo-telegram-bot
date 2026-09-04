@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 TELEGRAM_THREAD_ID = os.environ.get("TELEGRAM_THREAD_ID")
+XBO_COCKPIT_TOKEN = os.environ.get("XBO_COCKPIT_TOKEN", "")
 XBO_SPOT_BASE = "https://www.xbo.com/platform/spot"
 XBO_API_BASE = "https://api.xbo.com"
 XBO_LOGO_CDN = "https://assets.xbo.com/token-icons/png"
@@ -538,6 +539,47 @@ def send_telegram(text, image_tg=None, image_insta=None):
         return False
 
 
+def send_cockpit(caption: str, image_tg: BytesIO | None, image_insta: BytesIO | None) -> bool:
+    """Отправка в XBO Marketing Cockpit."""
+    if not XBO_COCKPIT_TOKEN:
+        print("⚠️ XBO_COCKPIT_TOKEN не задан — пропускаем cockpit")
+        return False
+
+    try:
+        url = "https://xbo-marketing-app-production.up.railway.app/api/social/submit/movers"
+        headers = {"Authorization": f"Bearer {XBO_COCKPIT_TOKEN}"}
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+        files = []
+        if image_tg:
+            image_tg.seek(0)
+            files.append(("images", ("movers_wide.png", image_tg, "image/png")))
+        if image_insta:
+            image_insta.seek(0)
+            files.append(("images", ("movers_story.png", image_insta, "image/png")))
+
+        if not files:
+            print("❌ Cockpit: нет картинок для отправки")
+            return False
+
+        data = {"caption": caption, "date": today}
+
+        r = requests.post(url, headers=headers, files=files, data=data, timeout=60)
+        result = r.json()
+
+        if r.status_code == 200 and result.get("ok"):
+            print(f"✅ Cockpit: отправлено! Дата: {result.get('date')}, картинок: {result.get('images')}")
+            print(f"   Каналы: {', '.join(result.get('targets', []))}")
+            return True
+        else:
+            print(f"❌ Cockpit: {r.status_code} — {result.get('error', result)}")
+            return False
+
+    except Exception as e:
+        print(f"❌ Cockpit ошибка: {e}")
+        return False
+
+
 def main():
     print("🚀 XBO Top 5 Tokens Bot")
     print(f"   {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}\n")
@@ -565,8 +607,13 @@ def main():
     except Exception as e:
         print(f"⚠️ Insta-картинка не создана: {e}")
 
-    if not send_telegram(build_post(tokens), image_tg, image_insta):
-        exit(1)
+    caption = build_post(tokens)
+
+    # Отправка в Telegram
+    send_telegram(caption, image_tg, image_insta)
+
+    # Отправка в Cockpit
+    send_cockpit(caption, image_tg, image_insta)
 
 
 if __name__ == "__main__":
