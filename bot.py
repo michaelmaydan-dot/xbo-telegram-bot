@@ -564,10 +564,18 @@ def send_cockpit(caption: str, image_tg: BytesIO | None, image_insta: BytesIO | 
         files = []
         if image_tg:
             image_tg.seek(0)
-            files.append(("images", ("movers_wide.png", image_tg, "image/png")))
+            from PIL import Image as PILImage
+            tg_jpg = BytesIO()
+            PILImage.open(image_tg).convert("RGB").save(tg_jpg, format="JPEG", quality=90)
+            tg_jpg.seek(0)
+            files.append(("images", ("movers_wide.jpg", tg_jpg, "image/jpeg")))
         if image_insta:
             image_insta.seek(0)
-            files.append(("images", ("movers_story.png", image_insta, "image/png")))
+            from PIL import Image as PILImage
+            insta_jpg = BytesIO()
+            PILImage.open(image_insta).convert("RGB").save(insta_jpg, format="JPEG", quality=90)
+            insta_jpg.seek(0)
+            files.append(("images", ("movers_story.jpg", insta_jpg, "image/jpeg")))
 
         if not files:
             print("❌ Cockpit: нет картинок для отправки")
