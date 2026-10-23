@@ -583,7 +583,15 @@ def send_cockpit(caption: str, image_tg: BytesIO | None, image_insta: BytesIO | 
 
         data = {"caption": html_to_plain(caption), "date": today}
 
+        print(f"   Cockpit URL: {url}")
         r = requests.post(url, headers=headers, files=files, data=data, timeout=60)
+        print(f"   Cockpit статус: {r.status_code}")
+        print(f"   Cockpit ответ: {r.text[:500]}")
+
+        if not r.text.strip():
+            print("❌ Cockpit: пустой ответ")
+            return False
+
         result = r.json()
 
         if r.status_code == 200 and result.get("ok"):
