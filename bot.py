@@ -557,7 +557,7 @@ def send_cockpit(caption: str, image_tg: BytesIO | None, image_insta: BytesIO | 
         return False
 
     try:
-        url = "https://xbo-marketing-app-production.up.railway.app/api/social/submit/movers"
+        url = "https://xbo-marketing.vb.space-app.io/api/social/submit/movers"
         headers = {"Authorization": f"Bearer {XBO_COCKPIT_TOKEN}"}
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
